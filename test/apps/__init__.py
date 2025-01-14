@@ -1,10 +1,9 @@
-import logging
-from typing import List
+from __future__ import annotations
 
 import click
 from aiohttp import web
 
-from schemathesis.cli import CSVOption
+from schemathesis.cli.ext.options import CsvEnumChoice
 
 try:
     from . import _graphql, openapi
@@ -16,11 +15,11 @@ except ImportError as exc:
         import _graphql
         import openapi
     except ImportError:
-        raise exc
+        raise exc from None
 
 
 INVALID_OPERATIONS = ("invalid", "invalid_response", "invalid_path_parameter", "missing_path_parameter")
-AvailableOperations = CSVOption(openapi.schema.Operation)
+AvailableOperations = CsvEnumChoice(openapi.schema.Operation)
 
 
 @click.command()
@@ -28,7 +27,7 @@ AvailableOperations = CSVOption(openapi.schema.Operation)
 @click.option("--operations", type=AvailableOperations)
 @click.option("--spec", type=click.Choice(["openapi2", "openapi3", "graphql"]), default="openapi2")
 @click.option("--framework", type=click.Choice(["aiohttp", "flask"]), default="aiohttp")
-def run_app(port: int, operations: List[openapi.schema.Operation], spec: str, framework: str) -> None:
+def run_app(port: int, operations: list[openapi.schema.Operation], spec: str, framework: str) -> None:
     if spec == "graphql":
         app = _graphql._flask.create_app()
         app.run(port=port)
@@ -49,8 +48,7 @@ def run_app(port: int, operations: List[openapi.schema.Operation], spec: str, fr
             spec
         ]
         click.secho(
-            f"Schemathesis test server is running!\n\n"
-            f"API Schema is available at: http://0.0.0.0:{port}/schema.yaml\n",
+            f"Schemathesis test server is running!\n\nAPI Schema is available at: http://0.0.0.0:{port}/schema.yaml\n",
             bold=True,
         )
         if framework == "aiohttp":
@@ -62,5 +60,4 @@ def run_app(port: int, operations: List[openapi.schema.Operation], spec: str, fr
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.DEBUG)
     run_app()

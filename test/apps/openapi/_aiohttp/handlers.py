@@ -1,12 +1,15 @@
+from __future__ import annotations
+
 import asyncio
-import cgi
 import csv
-import io
-from typing import Dict
+import json
 from uuid import uuid4
 
 import jsonschema
 from aiohttp import web
+
+from schemathesis.core import media_types
+from schemathesis.core.output import MAX_PAYLOAD_SIZE
 
 try:
     from ..schema import PAYLOAD_VALIDATOR
@@ -16,8 +19,8 @@ except (ImportError, ValueError):
 
 async def expect_content_type(request: web.Request, value: str):
     content_type = request.headers.get("Content-Type", "")
-    content_type, _ = cgi.parse_header(content_type)
-    if content_type != value:
+    main, sub = media_types.parse(content_type)
+    if f"{main}/{sub}" != value:
         raise web.HTTPInternalServerError(text=f"Expected {value} payload")
     return await request.read()
 
@@ -45,6 +48,16 @@ async def empty_string(request: web.Request) -> web.Response:
     return web.Response(body="")
 
 
+async def binary(request: web.Request) -> web.Response:
+    return web.Response(
+        body=b"\xa7\xf5=\x18H\xc7\xff'\xf0\xeep\x06M-RX", content_type="application/octet-stream", status=500
+    )
+
+
+async def long(request: web.Request) -> web.Response:
+    return web.Response(body=json.dumps(["A"] * MAX_PAYLOAD_SIZE), content_type="application/json", status=500)
+
+
 async def payload(request: web.Request) -> web.Response:
     body = await request.read()
     if body:
@@ -52,7 +65,7 @@ async def payload(request: web.Request) -> web.Response:
         try:
             PAYLOAD_VALIDATOR.validate(data)
         except jsonschema.ValidationError as exc:
-            raise web.HTTPBadRequest(text=str(exc))
+            raise web.HTTPBadRequest(text=str(exc))  # noqa: B904
         return web.json_response(body=body)
     return web.json_response({"name": "Nothing!"})
 
@@ -106,6 +119,10 @@ async def headers(request: web.Request) -> web.Response:
     return web.json_response(values, headers=values)
 
 
+async def ignored_auth(request: web.Request) -> web.Response:
+    return web.json_response({"has_auth": "Authorization" in request.headers})
+
+
 async def malformed_json(request: web.Request) -> web.Response:
     return web.Response(body="{malformed}", content_type="application/json")
 
@@ -147,9 +164,9 @@ async def multiple_failures(request: web.Request) -> web.Response:
     try:
         id_value = int(request.query["id"])
     except KeyError:
-        raise web.HTTPBadRequest(text='{"detail": "Missing `id`"}')
+        raise web.HTTPBadRequest(text='{"detail": "Missing `id`"}')  # noqa: B904
     except ValueError:
-        raise web.HTTPBadRequest(text='{"detail": "Invalid `id`"}')
+        raise web.HTTPBadRequest(text='{"detail": "Invalid `id`"}')  # noqa: B904
     if id_value == 0:
         raise web.HTTPInternalServerError
     if id_value > 0:
@@ -157,23 +174,18 @@ async def multiple_failures(request: web.Request) -> web.Response:
     return web.json_response({"result": "OK"})
 
 
-def _decode_multipart(content: bytes, content_type: str) -> Dict[str, str]:
-    # a simplified version of multipart encoding that satisfies testing purposes
-    _, options = cgi.parse_header(content_type)
-    options["boundary"] = options["boundary"].encode()
-    options["CONTENT-LENGTH"] = len(content)
-    return {
-        key: value[0].decode() if isinstance(value[0], bytes) else value[0]
-        for key, value in cgi.parse_multipart(io.BytesIO(content), options).items()
-    }
-
-
 async def multipart(request: web.Request) -> web.Response:
     if not request.headers.get("Content-Type", "").startswith("multipart/"):
         raise web.HTTPBadRequest(text="Not a multipart request!")
-    # We need to have payload stored in the request, thus can't use `request.multipart` that consumes the reader
-    content = await request.read()
-    data = _decode_multipart(content, request.headers["Content-Type"])
+    raw_payload = await request.read()
+    multipart_reader = await request.multipart()
+    multipart_reader._content._buffer.append(raw_payload)
+    data = {}
+    while True:
+        part = await multipart_reader.next()
+        if part is None:
+            break
+        data[part.name] = (await part.read()).decode("utf-8")
     return web.json_response(data)
 
 
@@ -246,7 +258,7 @@ def get_user_id(request: web.Request) -> str:
     try:
         return request.match_info["user_id"]
     except KeyError:
-        raise web.HTTPBadRequest(text='{"detail": "Missing `user_id`"}')
+        raise web.HTTPBadRequest(text='{"detail": "Missing `user_id`"}')  # noqa: B904
 
 
 async def get_user(request: web.Request) -> web.Response:

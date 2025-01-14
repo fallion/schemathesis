@@ -1,89 +1,101 @@
-Schemathesis: Property-based testing for API schemas
-====================================================
+Welcome to Schemathesis!
+========================
 
-Schemathesis is a modern API testing tool for web applications built with Open API and GraphQL specifications.
+Schemathesis is a tool that levels-up your API testing by leveraging API specs as a blueprints for generating test cases.
+It focuses on testing for general properties — such as ensuring no input leads to server errors and all responses adhere to the API spec — rather than just checking specific input-output combinations.
 
-It reads the application schema and generates test cases, which will ensure that your application is compliant with its schema.
+This approach broadens your testing suite's capability to detect a wide range of potential issues, from trivial bugs to critical vulnerabilities.
 
-The application under test could be written in any language; the only thing you need is a valid API schema in a supported format.
+🎯 **Catch Hard-to-Find Bugs**
 
-Simple to use and yet powerful to uncover hard-to-find errors thanks to the property-based testing approach backed by state-of-the-art `Hypothesis <http://hypothesis.works/>`_ library.
+- Uncover hidden crashes and edge cases that manual testing might miss
+- Identify spec violations and ensure your API adheres to its contract
 
-You can use Schemathesis in the command line:
+⚡ **Accelerate Testing Cycles**
 
-.. code:: bash
+- Automatically generate a wide range of test cases based on your API schema
+- Save time by reducing the need for manual test case creation
 
-  schemathesis run http://example.com/swagger.json
+🧩 **Integrate Seamlessly**
 
-Or in your Python tests:
+- Works with popular API formats such as OpenAPI, GraphQL.
+- Easily integrate into your existing CI/CD workflows.
 
-.. code-block:: python
+🔧 **Customize and Extend**
 
-    import schemathesis
+- Tune the testing process using Python extensions.
+- Adjust the testing flow to suit your needs with rich configuration options.
 
-    schema = schemathesis.from_uri("http://example.com/swagger.json")
+🐞 **Simplifies Debugging**
 
+- Get detailed reports to identify and fix issues quickly.
+- Reproduce failing test cases with cURL commands.
 
-    @schema.parametrize()
-    def test_api(case):
-        case.call_and_validate()
+🔬 **Proven by Research**
 
-Both examples above will run hundreds of requests against the API under test and report all found failures and inconsistencies along with instructions to reproduce them.
+- Validated through academic studies on API testing automation
+- Featured in `ICSE 2022 paper <https://ieeexplore.ieee.org/document/9793781>`_ on semantics-aware fuzzing
+- Recognized in `ACM survey <https://dl.acm.org/doi/10.1145/3617175>`_ as state-of-the-art RESTful API testing tool
 
-Features
---------
+How it works?
+-------------
 
- - Content-Type, schema, headers, and status code conformance checks for Open API;
- - Testing of explicit examples from the input schema;
- - Stateful testing via Open API links;
- - Concurrent test execution;
- - Targeted testing;
- - Storing and replaying network requests;
- - Built-in ASGI / WSGI application support;
- - Code samples for easy failure reproduction;
- - Ready-to-go Docker image;
- - Configurable with user-defined checks, string formats, hooks, and targets.
+Here’s an overview of how Schemathesis works:
+
+1. **Test Generation**: Using the API schema to create a test generator that you can fine-tune to your requirements.
+2. **Execution and Adaptation**: Sending tests to the API and adapting through statistical models and heuristics to optimize test cases based on responses.
+3. **Analysis and Minimization**: Checking responses for issues and simplifying failing test cases for easier debugging.
+4. **Stateful Testing**: Running multi-step tests to assess API operations in both isolated and integrated scenarios.
+5. **Reporting**: Generating detailed reports with insights and cURL commands for easy issue reproduction.
+
+Research Findings on Open-Source API Testing Tools
+--------------------------------------------------
+
+Our study, presented at the **44th International Conference on Software Engineering**, highlighted Schemathesis's performance:
+
+- **Defect Detection**: identified a total of **755 bugs** in **16 services**, finding between **1.4× to 4.5× more defects** than the second-best tool in each case.
+- **High Reliability**: consistently operates seamlessly on any project, ensuring unwavering stability and reliability.
+
+Explore the full paper at `IEEEXplore <https://ieeexplore.ieee.org/document/9793781>`_ or pre-print at `arXiv <https://arxiv.org/abs/2112.10328>`_.
+
+Community & Support
+-------------------
+
+Join our `Discord <https://discord.gg/R9ASRAmHnA>`_ channel for access to learning resources and prompt support to resolve questions and expand your knowledge.
+
+If you're a large enterprise or startup seeking specialized assistance, we offer commercial support to help you integrate Schemathesis effectively into your workflows. This includes:
+
+- Quicker response time for your queries.
+- Direct consultation to work closely with your API specification, optimizing the Schemathesis setup for your specific needs.
+
+To discuss a custom support arrangement that best suits your organization, please contact our support team at `support@schemathesis.io <mailto:support@schemathesis.io>`_.
 
 User's Guide
 ------------
 
+The User Guide explains different parts of Schemathesis and how they can be used, customized, and extended.
+It generally follows the operational workflow of Schemathesis, detailing steps from initial schema loading to test generation, execution, and result evaluation.
+
 .. toctree::
    :maxdepth: 2
 
-   introduction
+   getting-started
+   data-generation
    cli
    python
-   stateful
+   continuous_integration
+   experimental
    service
-   how
-   compatibility
+   auth
+   contrib
+   stateful
+   sanitizing
    examples
    graphql
    targeted
    extending
-
-Commercial support
-------------------
-
-If you are interested in the effective integration of Schemathesis to your private project, you can contact me via email or `Twitter <https://twitter.com/Stranger6667>`_ and I will help you do that.
-
-Resources
----------
-
-- `Deriving Semantics-Aware Fuzzers from Web API Schemas <https://arxiv.org/abs/2112.10328>`_ by **Zac-HD** and **@Stranger6667**
-- `An article <https://dygalo.dev/blog/schemathesis-property-based-testing-for-api-schemas/>`_ about Schemathesis by **@Stranger6667**
-- `Effective API schemas testing <https://youtu.be/VVLZ25JgjD4>`_ from DevConf.cz by **@Stranger6667**
-- `A video <https://www.youtube.com/watch?v=9FHRwrv-xuQ>`_ from EuroPython 2020 by **@hultner**
-- `Schemathesis tutorial <https://appdev.consulting.redhat.com/tracks/contract-first/automated-testing-with-schemathesis.html>`_  with an accompanying `video <https://www.youtube.com/watch?v=4r7OC-lBKMg>`_ by Red Hat
-- `Using Hypothesis and Schemathesis to Test FastAPI <https://testdriven.io/blog/fastapi-hypothesis/>`_ by **@amalshaji**
-
-Additional notes
-----------------
-
-.. toctree::
-   :maxdepth: 2
-
    recipes
+   additional-content
    api
    faq
    changelog

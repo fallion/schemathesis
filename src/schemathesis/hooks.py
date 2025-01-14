@@ -1,17 +1,23 @@
+from __future__ import annotations
+
 import inspect
 from collections import defaultdict
-from copy import deepcopy
+from dataclasses import dataclass, field
 from enum import Enum, unique
-from typing import TYPE_CHECKING, Any, Callable, DefaultDict, Dict, List, Optional, Union, cast
+from functools import partial
+from typing import TYPE_CHECKING, Any, Callable, ClassVar, cast
 
-import attr
-from hypothesis import strategies as st
-
-from .types import GenericTest
-from .utils import GenericResponse, deprecated_property
+from schemathesis.core.marks import Mark
+from schemathesis.core.transport import Response
+from schemathesis.filters import FilterSet, attach_filter_chain
 
 if TYPE_CHECKING:
-    from .models import APIOperation, Case
+    from hypothesis import strategies as st
+
+    from schemathesis.generation.case import Case
+    from schemathesis.schemas import APIOperation, BaseSchema
+
+HookDispatcherMark = Mark["HookDispatcher"](attr_name="hook_dispatcher")
 
 
 @unique
@@ -21,13 +27,15 @@ class HookScope(Enum):
     TEST = 3
 
 
-@attr.s(slots=True)  # pragma: no mutate
+@dataclass
 class RegisteredHook:
-    signature: inspect.Signature = attr.ib()  # pragma: no mutate
-    scopes: List[HookScope] = attr.ib()  # pragma: no mutate
+    signature: inspect.Signature
+    scopes: list[HookScope]
+
+    def _repr_pretty_(self, *args: Any, **kwargs: Any) -> None: ...
 
 
-@attr.s(slots=True)  # pragma: no mutate
+@dataclass
 class HookContext:
     """A context that is passed to some hook functions.
 
@@ -35,25 +43,76 @@ class HookContext:
                                             Might be absent in some cases.
     """
 
-    operation: Optional["APIOperation"] = attr.ib(default=None)  # pragma: no mutate
-
-    @deprecated_property(removed_in="4.0", replacement="operation")
-    def endpoint(self) -> Optional["APIOperation"]:
-        return self.operation
+    operation: APIOperation | None = None
 
 
-@attr.s(slots=True)  # pragma: no mutate
+def to_filterable_hook(dispatcher: HookDispatcher) -> Callable:
+    filter_used = False
+    filter_set = FilterSet()
+
+    def register(hook: str | Callable) -> Callable:
+        nonlocal filter_set
+
+        if filter_used:
+            validate_filterable_hook(hook)
+
+        if isinstance(hook, str):
+
+            def decorator(func: Callable) -> Callable:
+                hook_name = cast(str, hook)
+                if filter_used:
+                    validate_filterable_hook(hook)
+                func.filter_set = filter_set  # type: ignore[attr-defined]
+                return dispatcher.register_hook_with_name(func, hook_name)
+
+            init_filter_set(decorator)
+            return decorator
+
+        hook.filter_set = filter_set  # type: ignore[attr-defined]
+        init_filter_set(register)
+        return dispatcher.register_hook_with_name(hook, hook.__name__)
+
+    def init_filter_set(target: Callable) -> FilterSet:
+        nonlocal filter_used
+
+        filter_used = False
+        filter_set = FilterSet()
+
+        def include(*args: Any, **kwargs: Any) -> None:
+            nonlocal filter_used
+
+            filter_used = True
+            filter_set.include(*args, **kwargs)
+
+        def exclude(*args: Any, **kwargs: Any) -> None:
+            nonlocal filter_used
+
+            filter_used = True
+            filter_set.exclude(*args, **kwargs)
+
+        attach_filter_chain(target, "apply_to", include)
+        attach_filter_chain(target, "skip_for", exclude)
+        return filter_set
+
+    filter_set = init_filter_set(register)
+    return register
+
+
+@dataclass
 class HookDispatcher:
     """Generic hook dispatcher.
 
     Provides a mechanism to extend Schemathesis in registered hook points.
     """
 
-    scope: HookScope = attr.ib()  # pragma: no mutate
-    _hooks: DefaultDict[str, List[Callable]] = attr.ib(factory=lambda: defaultdict(list))  # pragma: no mutate
-    _specs: Dict[str, RegisteredHook] = {}  # pragma: no mutate
+    scope: HookScope
+    _hooks: defaultdict[str, list[Callable]] = field(default_factory=lambda: defaultdict(list))
+    _specs: ClassVar[dict[str, RegisteredHook]] = {}
 
-    def register(self, hook: Union[str, Callable]) -> Callable:
+    def __post_init__(self) -> None:
+        self.register = to_filterable_hook(self)  # type: ignore[method-assign]
+
+    def register(self, hook: str | Callable) -> Callable:
         """Register a new hook.
 
         :param hook: Either a hook function or a string.
@@ -63,7 +122,7 @@ class HookDispatcher:
 
         .. code-block:: python
 
-            @schemathesis.hooks.register
+            @schemathesis.hook
             def before_generate_query(context, strategy):
                 ...
 
@@ -71,32 +130,13 @@ class HookDispatcher:
 
         .. code-block:: python
 
-            @schemathesis.hooks.register("before_generate_query")
+            @schemathesis.hook("before_generate_query")
             def hook(context, strategy):
                 ...
         """
-        if isinstance(hook, str):
+        raise NotImplementedError
 
-            def decorator(func: Callable) -> Callable:
-                hook_name = cast(str, hook)
-                return self.register_hook_with_name(func, hook_name)
-
-            return decorator
-        return self.register_hook_with_name(hook, hook.__name__)
-
-    def merge(self, other: "HookDispatcher") -> "HookDispatcher":
-        """Merge two dispatches together.
-
-        The resulting dispatcher will call the `self` hooks first.
-        """
-        all_hooks = deepcopy(self._hooks)
-        for name, hooks in other._hooks.items():
-            all_hooks[name].extend(hooks)
-        instance = self.__class__(scope=self.scope)
-        instance._hooks = all_hooks
-        return instance
-
-    def apply(self, hook: Callable, *, name: Optional[str] = None) -> Callable[[Callable], Callable]:
+    def apply(self, hook: Callable, *, name: str | None = None) -> Callable[[Callable], Callable]:
         """Register hook to run only on one test function.
 
         :param hook: A hook function.
@@ -114,13 +154,12 @@ class HookDispatcher:
                 ...
 
         """
-
         if name is None:
             hook_name = hook.__name__
         else:
             hook_name = name
 
-        def decorator(func: GenericTest) -> GenericTest:
+        def decorator(func: Callable) -> Callable:
             dispatcher = self.add_dispatcher(func)
             dispatcher.register_hook_with_name(hook, hook_name)
             return func
@@ -128,11 +167,13 @@ class HookDispatcher:
         return decorator
 
     @classmethod
-    def add_dispatcher(cls, func: GenericTest) -> "HookDispatcher":
+    def add_dispatcher(cls, func: Callable) -> HookDispatcher:
         """Attach a new dispatcher instance to the test if it is not already present."""
-        if not hasattr(func, "_schemathesis_hooks"):
-            func._schemathesis_hooks = cls(scope=HookScope.TEST)  # type: ignore
-        return func._schemathesis_hooks  # type: ignore
+        if not HookDispatcherMark.is_set(func):
+            HookDispatcherMark.set(func, cls(scope=HookScope.TEST))
+        dispatcher = HookDispatcherMark.get(func)
+        assert dispatcher is not None
+        return dispatcher
 
     def register_hook_with_name(self, hook: Callable, name: str) -> Callable:
         """A helper for hooks registration."""
@@ -141,7 +182,7 @@ class HookDispatcher:
         return hook
 
     @classmethod
-    def register_spec(cls, scopes: List[HookScope]) -> Callable:
+    def register_spec(cls, scopes: list[HookScope]) -> Callable:
         """Register hook specification.
 
         All hooks, registered with `register` should comply with corresponding registered specs.
@@ -171,13 +212,39 @@ class HookDispatcher:
                 f"Hook '{name}' takes {len(spec.signature.parameters)} arguments but {len(signature.parameters)} is defined"
             )
 
-    def get_all_by_name(self, name: str) -> List[Callable]:
+    def get_all_by_name(self, name: str) -> list[Callable]:
         """Get a list of hooks registered for a name."""
         return self._hooks.get(name, [])
+
+    def apply_to_container(
+        self, strategy: st.SearchStrategy, container: str, context: HookContext
+    ) -> st.SearchStrategy:
+        for hook in self.get_all_by_name(f"before_generate_{container}"):
+            if _should_skip_hook(hook, context):
+                continue
+            strategy = hook(context, strategy)
+        for hook in self.get_all_by_name(f"filter_{container}"):
+            if _should_skip_hook(hook, context):
+                continue
+            hook = partial(hook, context)
+            strategy = strategy.filter(hook)
+        for hook in self.get_all_by_name(f"map_{container}"):
+            if _should_skip_hook(hook, context):
+                continue
+            hook = partial(hook, context)
+            strategy = strategy.map(hook)
+        for hook in self.get_all_by_name(f"flatmap_{container}"):
+            if _should_skip_hook(hook, context):
+                continue
+            hook = partial(hook, context)
+            strategy = strategy.flatmap(hook)
+        return strategy
 
     def dispatch(self, name: str, context: HookContext, *args: Any, **kwargs: Any) -> None:
         """Run all hooks for the given name."""
         for hook in self.get_all_by_name(name):
+            if _should_skip_hook(hook, context):
+                continue
             hook(context, *args, **kwargs)
 
     def unregister(self, hook: Callable) -> None:
@@ -197,7 +264,48 @@ class HookDispatcher:
         self._hooks = defaultdict(list)
 
 
+def _should_skip_hook(hook: Callable, ctx: HookContext) -> bool:
+    filter_set = getattr(hook, "filter_set", None)
+    return filter_set is not None and ctx.operation is not None and not filter_set.match(ctx)
+
+
+def apply_to_all_dispatchers(
+    operation: APIOperation,
+    context: HookContext,
+    hooks: HookDispatcher | None,
+    strategy: st.SearchStrategy,
+    container: str,
+) -> st.SearchStrategy:
+    """Apply all hooks related to the given location."""
+    strategy = GLOBAL_HOOK_DISPATCHER.apply_to_container(strategy, container, context)
+    strategy = operation.schema.hooks.apply_to_container(strategy, container, context)
+    if hooks is not None:
+        strategy = hooks.apply_to_container(strategy, container, context)
+    return strategy
+
+
+def validate_filterable_hook(hook: str | Callable) -> None:
+    if callable(hook):
+        name = hook.__name__
+    else:
+        name = hook
+    if name in ("before_process_path", "before_load_schema", "after_load_schema"):
+        raise ValueError(f"Filters are not applicable to this hook: `{name}`")
+
+
 all_scopes = HookDispatcher.register_spec(list(HookScope))
+
+
+for action in ("filter", "map", "flatmap"):
+    for target in ("path_parameters", "query", "headers", "cookies", "body", "case"):
+        exec(
+            f"""
+@all_scopes
+def {action}_{target}(context: HookContext, {target}: Any) -> Any:
+    pass
+""",
+            globals(),
+        )
 
 
 @all_scopes
@@ -226,22 +334,27 @@ def before_generate_body(context: HookContext, strategy: st.SearchStrategy) -> s
 
 
 @all_scopes
-def before_generate_case(context: HookContext, strategy: st.SearchStrategy["Case"]) -> st.SearchStrategy["Case"]:
+def before_generate_case(context: HookContext, strategy: st.SearchStrategy[Case]) -> st.SearchStrategy[Case]:
     """Called on a strategy that generates ``Case`` instances."""
 
 
 @all_scopes
-def before_process_path(context: HookContext, path: str, methods: Dict[str, Any]) -> None:
+def before_process_path(context: HookContext, path: str, methods: dict[str, Any]) -> None:
     """Called before API path is processed."""
 
 
 @HookDispatcher.register_spec([HookScope.GLOBAL])
-def before_load_schema(context: HookContext, raw_schema: Dict[str, Any]) -> None:
+def before_load_schema(context: HookContext, raw_schema: dict[str, Any]) -> None:
     """Called before schema instance is created."""
 
 
+@HookDispatcher.register_spec([HookScope.GLOBAL])
+def after_load_schema(context: HookContext, schema: BaseSchema) -> None:
+    """Called after schema instance is created."""
+
+
 @all_scopes
-def before_add_examples(context: HookContext, examples: List["Case"]) -> None:
+def before_add_examples(context: HookContext, examples: list[Case]) -> None:
     """Called before explicit examples are added to a test via `@example` decorator.
 
     `examples` is a list that could be extended with examples provided by the user.
@@ -249,15 +362,29 @@ def before_add_examples(context: HookContext, examples: List["Case"]) -> None:
 
 
 @all_scopes
-def before_init_operation(context: HookContext, operation: "APIOperation") -> None:
+def before_init_operation(context: HookContext, operation: APIOperation) -> None:
     """Allows you to customize a newly created API operation."""
 
 
 @HookDispatcher.register_spec([HookScope.GLOBAL])
-def add_case(context: HookContext, case: "Case", response: GenericResponse) -> Optional["Case"]:
-    """Creates an additional test per API operation. If this hook returns None, no additional test created.
+def before_call(context: HookContext, case: Case, **kwargs: Any) -> None:
+    """Called before every network call in CLI tests.
 
-    Called with a copy of the original case object and the server's response to the original case.
+    Use cases:
+     - Modification of `case`. For example, adding some pre-determined value to its query string.
+     - Logging
+    """
+
+
+@HookDispatcher.register_spec([HookScope.GLOBAL])
+def after_call(context: HookContext, case: Case, response: Response) -> None:
+    """Called after every network call in CLI tests.
+
+    Note that you need to modify the response in-place.
+
+    Use cases:
+     - Response post-processing, like modifying its payload.
+     - Logging
     """
 
 

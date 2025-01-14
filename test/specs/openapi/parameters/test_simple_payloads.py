@@ -1,23 +1,24 @@
 """Tests for behavior not specific to forms."""
+
 import pytest
 
-from schemathesis.parameters import PayloadAlternatives
+import schemathesis
+from schemathesis.schemas import PayloadAlternatives
 from schemathesis.specs.openapi.parameters import OpenAPI20Body, OpenAPI30Body
 
 
 @pytest.mark.parametrize(
     "consumes",
-    (
+    [
         ["application/json"],
         # Multiple values in "consumes" implies multiple payload variants
         ["application/json", "application/xml"],
-    ),
+    ],
 )
 def test_payload_open_api_2(
     consumes,
     assert_parameters,
     make_openapi_2_schema,
-    open_api_2_user_form_with_file_parameters,
     open_api_2_user_in_body,
     user_jsonschema,
 ):
@@ -35,13 +36,13 @@ def test_payload_open_api_2(
 
 @pytest.mark.parametrize(
     "media_types",
-    (
+    [
         ["application/json"],
         # Each media type corresponds to a payload variant
         ["application/json", "application/xml"],
         # Forms can be also combined
         ["application/x-www-form-urlencoded", "multipart/form-data"],
-    ),
+    ],
 )
 def test_payload_open_api_3(media_types, assert_parameters, make_openapi_3_schema, open_api_3_user, user_jsonschema):
     schema = make_openapi_3_schema(
@@ -62,3 +63,14 @@ def test_payload_open_api_3(media_types, assert_parameters, make_openapi_3_schem
         # In this case they are the same
         [user_jsonschema] * len(media_types),
     )
+
+
+def test_parameter_set_get(make_openapi_3_schema):
+    header = {"in": "header", "name": "id", "required": True, "schema": {}}
+    raw_schema = make_openapi_3_schema(parameters=[header])
+    schema = schemathesis.openapi.from_dict(raw_schema)
+    headers = schema["/users"]["POST"].headers
+    assert "id" in headers
+    assert headers.contains("id")
+    assert not headers.contains("foo")
+    assert "foo" not in headers

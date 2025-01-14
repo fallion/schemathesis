@@ -1,0 +1,64 @@
+Exit code: 1
+---
+Stdout:
+Schemathesis dev
+━━━━━━━━━━━━━━━━
+
+
+ ✅  Loaded specification from /tmp/schema.json (in N ms)
+
+     Base URL:         http://127.0.0.1/api
+     Specification:    Open API 3.0.2
+     Operations:       3
+
+
+ ✅  API capabilities:
+
+     Supports NULL byte in headers:    ✘
+
+Stateful tests
+
+...
+
+=================================== FAILURES ===================================
+________________________________ Stateful tests ________________________________
+1. Test Case ID: <PLACEHOLDER>
+
+- Authentication declared but not enforced
+
+    The API returned `200 OK` for `GET /api/ignored_auth` that requires authentication.
+
+[200] OK:
+
+    `{"has_auth": false}`
+
+Reproduce with:
+
+    curl -X GET http://127.0.0.1/api/ignored_auth
+
+================================= EXPERIMENTS ==================================
+
+🧪 Stateful Only: Run only stateful tests
+   Feedback: https://github.com/schemathesis/schemathesis/discussions/2262
+
+Your feedback is crucial for experimental features. Please visit the provided URL(s) to share your thoughts.
+
+=================================== SUMMARY ====================================
+
+API Operations:
+  Selected: 3/3
+  Tested: 2
+  Skipped: 1
+
+Test Phases:
+  ✅ API probing
+  ⏭️ Unit testing (disabled)
+  ❌ Stateful testing
+
+Failures:
+  ❌ Authentication declared but not enforced: 1
+
+Test cases:
+  N generated, N found N unique failures, N skipped
+
+============================= 1 failures in 1.00s ==============================

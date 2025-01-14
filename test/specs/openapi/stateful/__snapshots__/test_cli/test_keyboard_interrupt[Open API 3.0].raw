@@ -1,0 +1,46 @@
+Exit code: 0
+---
+Stdout:
+Schemathesis dev
+━━━━━━━━━━━━━━━━
+
+
+ ✅  Loaded specification from http://127.0.0.1/schema.yaml (in N ms)
+
+     Base URL:         http://127.0.0.1/api
+     Specification:    Open API 3.0.2
+     Operations:       4
+
+
+ ✅  API capabilities:
+
+     Supports NULL byte in headers:    ✘
+
+Stateful tests
+
+
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! KeyboardInterrupt !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+================================= EXPERIMENTS ==================================
+
+🧪 Stateful Only: Run only stateful tests
+   Feedback: https://github.com/schemathesis/schemathesis/discussions/2262
+
+Your feedback is crucial for experimental features. Please visit the provided URL(s) to share your thoughts.
+
+=================================== SUMMARY ====================================
+
+API Operations:
+  Selected: 4/4
+  Tested: 0
+  Skipped: 4
+
+Test Phases:
+  ✅ API probing
+  ⏭️ Unit testing (disabled)
+  ⚡ Stateful testing
+
+Test cases:
+  N generated, N skipped
+
+=========================== No issues found in 1.00s ===========================

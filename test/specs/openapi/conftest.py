@@ -1,4 +1,4 @@
-from copy import deepcopy
+from dataclasses import fields
 
 import pytest
 
@@ -75,23 +75,27 @@ def open_api_2_user_in_body(open_api_2_user):
 
 @pytest.fixture
 def open_api_2_user_form_with_file_parameters(open_api_2_user_form_parameters):
-    return open_api_2_user_form_parameters + [{"in": "formData", "name": "scan", "required": True, "type": "file"}]
+    return [*open_api_2_user_form_parameters, {"in": "formData", "name": "scan", "required": True, "type": "file"}]
 
 
 @pytest.fixture
-def make_openapi_2_schema(empty_open_api_2_schema):
+def make_openapi_2_schema(ctx):
     def maker(consumes, parameters):
-        schema = deepcopy(empty_open_api_2_schema)
-        schema["paths"]["/users"] = {
-            "post": {
-                "summary": "Test operation",
-                "description": "Test",
-                "parameters": parameters,
-                "consumes": consumes,
-                "produces": ["application/json"],
-                "responses": {"200": {"description": "OK"}},
-            }
-        }
+        schema = ctx.openapi.build_schema(
+            {
+                "/users": {
+                    "post": {
+                        "summary": "Test operation",
+                        "description": "Test",
+                        "parameters": parameters,
+                        "consumes": consumes,
+                        "produces": ["application/json"],
+                        "responses": {"200": {"description": "OK"}},
+                    }
+                }
+            },
+            version="2.0",
+        )
         SWAGGER_20_VALIDATOR.validate(schema)
         return schema
 
@@ -113,9 +117,8 @@ def open_api_3_user_with_file():
 
 
 @pytest.fixture
-def make_openapi_3_schema(empty_open_api_3_schema):
+def make_openapi_3_schema(ctx):
     def maker(body=None, parameters=None):
-        schema = deepcopy(empty_open_api_3_schema)
         definition = {
             "summary": "Test operation",
             "description": "Test",
@@ -125,7 +128,7 @@ def make_openapi_3_schema(empty_open_api_3_schema):
             definition["requestBody"] = body
         if parameters is not None:
             definition["parameters"] = parameters
-        schema["paths"]["/users"] = {"post": definition}
+        schema = ctx.openapi.build_schema({"/users": {"post": definition}})
         OPENAPI_30_VALIDATOR.validate(schema)
         return schema
 
@@ -135,10 +138,10 @@ def make_openapi_3_schema(empty_open_api_3_schema):
 @pytest.fixture
 def assert_parameters():
     def _compare(left, right):
-        assert type(left) == type(right)
-        for attr in type(left).__attrs_attrs__:
-            left_attr = getattr(left, attr.name)
-            right_attr = getattr(right, attr.name)
+        assert type(left) is type(right)
+        for field in fields(left):
+            left_attr = getattr(left, field.name)
+            right_attr = getattr(right, field.name)
             if isinstance(left_attr, list):
                 assert len(left_attr) == len(right_attr)
                 for sub_left, sub_right in zip(left_attr, right_attr):
@@ -147,9 +150,10 @@ def assert_parameters():
                 assert left_attr == right_attr
 
     def check(schema, expected, json_schemas, location="body"):
-        schema = schemathesis.from_dict(schema)
-        container = getattr(schema["/users"]["POST"], location)
+        schema = schemathesis.openapi.from_dict(schema)
+        operation = schema["/users"]["POST"]
+        container = getattr(operation, location)
         _compare(container, expected)
-        assert [item.as_json_schema() for item in container] == json_schemas
+        assert [item.as_json_schema(operation) for item in container] == json_schemas
 
     return check

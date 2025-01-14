@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 #
 # platform documentation build configuration file, created by
 # sphinx-quickstart on Fri Jan 13 12:59:16 2017.
@@ -18,24 +16,24 @@
 # documentation root, use os.path.abspath to make it absolute, like shown here.
 #
 import datetime
-import os
-import sys
 
-sys.path.insert(0, os.path.abspath("../src/schemathesis"))
-
-# isort:imports-firstparty
 import schemathesis
 
 # -- General configuration ------------------------------------------------
 
 # If your documentation needs a minimal Sphinx version, state it here.
 #
-needs_sphinx = "3.5.3"
+needs_sphinx = "7.1.0"
+
+extlinks = {
+    "issue": ("https://github.com/schemathesis/schemathesis/issues/%s", "#%s"),
+    "version": ("https://github.com/schemathesis/schemathesis/compare/%s", "%s"),
+}
 
 # Add any Sphinx extension module names here, as strings. They can be
 # extensions coming with Sphinx (named 'sphinx.ext.*') or your custom
 # ones.
-extensions = ["sphinx.ext.autodoc", "sphinx.ext.viewcode", "sphinx_click"]
+extensions = ["sphinx.ext.extlinks", "sphinx.ext.autodoc", "sphinx.ext.viewcode", "sphinx_click"]
 
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ["_templates"]
@@ -51,7 +49,7 @@ master_doc = "index"
 
 # General information about the project.
 project = "Schemathesis"
-copyright = "{year}, Dmitry Dygalo".format(year=datetime.date.today().year)
+copyright = f"{datetime.date.today().year}, Dmitry Dygalo"
 author = "Dmitry Dygalo"
 
 # The version info for the project you're documenting, acts as replacement for
@@ -67,7 +65,7 @@ release = version = schemathesis.__version__
 #
 # This is also used if you do content translation via gettext catalogs.
 # Usually you set "language" from the command line for these cases.
-language = None
+language = "en"
 
 # List of patterns, relative to source directory, that match files and
 # directories to ignore when looking for source files.
@@ -126,7 +124,7 @@ latex_elements = {
 # Grouping the document tree into LaTeX files. List of tuples
 # (source start file, target name, title,
 #  author, documentclass [howto, manual, or own class]).
-latex_documents = [(master_doc, "schemathesis.tex", "schemathesis Documentation", "platform team", "manual")]
+latex_documents = [(master_doc, "schemathesis.tex", "schemathesis Documentation", "manual")]
 
 
 # -- Options for manual page output ---------------------------------------

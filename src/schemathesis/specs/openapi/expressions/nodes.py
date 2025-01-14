@@ -1,16 +1,22 @@
 """Expression nodes description and evaluation logic."""
-from enum import Enum, unique
-from typing import Any, Dict, Optional, Union
 
-import attr
+from __future__ import annotations
+
+from dataclasses import dataclass
+from enum import Enum, unique
+from typing import TYPE_CHECKING, Any, cast
+
 from requests.structures import CaseInsensitiveDict
 
-from ....utils import WSGIResponse
-from . import pointers
-from .context import ExpressionContext
+from schemathesis.core.transforms import UNRESOLVABLE, resolve_pointer
+from schemathesis.transport.requests import REQUESTS_TRANSPORT
+
+if TYPE_CHECKING:
+    from .context import ExpressionContext
+    from .extractors import Extractor
 
 
-@attr.s(slots=True)  # pragma: no mutate
+@dataclass
 class Node:
     """Generic expression node."""
 
@@ -27,11 +33,11 @@ class NodeType(Enum):
     RESPONSE = "$response"
 
 
-@attr.s(slots=True)  # pragma: no mutate
+@dataclass
 class String(Node):
     """A simple string that is not evaluated somehow specifically."""
 
-    value: str = attr.ib()  # pragma: no mutate
+    value: str
 
     def evaluate(self, context: ExpressionContext) -> str:
         """String tokens are passed as they are.
@@ -43,15 +49,20 @@ class String(Node):
         return self.value
 
 
-@attr.s(slots=True)  # pragma: no mutate
+@dataclass
 class URL(Node):
     """A node for `$url` expression."""
 
     def evaluate(self, context: ExpressionContext) -> str:
-        return context.case.get_full_url()
+        import requests
+
+        base_url = context.case.operation.base_url or "http://127.0.0.1"
+        kwargs = REQUESTS_TRANSPORT.serialize_case(context.case, base_url=base_url)
+        prepared = requests.Request(**kwargs).prepare()
+        return cast(str, prepared.url)
 
 
-@attr.s(slots=True)  # pragma: no mutate
+@dataclass
 class Method(Node):
     """A node for `$method` expression."""
 
@@ -59,7 +70,7 @@ class Method(Node):
         return context.case.operation.method.upper()
 
 
-@attr.s(slots=True)  # pragma: no mutate
+@dataclass
 class StatusCode(Node):
     """A node for `$statusCode` expression."""
 
@@ -67,59 +78,74 @@ class StatusCode(Node):
         return str(context.response.status_code)
 
 
-@attr.s(slots=True)  # pragma: no mutate
+@dataclass
 class NonBodyRequest(Node):
     """A node for `$request` expressions where location is not `body`."""
 
-    location: str = attr.ib()  # pragma: no mutate
-    parameter: str = attr.ib()  # pragma: no mutate
+    location: str
+    parameter: str
+    extractor: Extractor | None = None
 
     def evaluate(self, context: ExpressionContext) -> str:
-        container: Union[Dict, CaseInsensitiveDict] = {
+        container: dict | CaseInsensitiveDict = {
             "query": context.case.query,
             "path": context.case.path_parameters,
             "header": context.case.headers,
         }[self.location] or {}
         if self.location == "header":
             container = CaseInsensitiveDict(container)
-        return container[self.parameter]
+        value = container.get(self.parameter)
+        if value is None:
+            return ""
+        if self.extractor is not None:
+            return self.extractor.extract(value) or ""
+        return value
 
 
-@attr.s(slots=True)  # pragma: no mutate
+@dataclass
 class BodyRequest(Node):
     """A node for `$request` expressions where location is `body`."""
 
-    pointer: Optional[str] = attr.ib(default=None)  # pragma: no mutate
+    pointer: str | None = None
 
     def evaluate(self, context: ExpressionContext) -> Any:
         document = context.case.body
         if self.pointer is None:
             return document
-        return pointers.resolve(document, self.pointer[1:])
+        resolved = resolve_pointer(document, self.pointer[1:])
+        if resolved is UNRESOLVABLE:
+            return None
+        return resolved
 
 
-@attr.s(slots=True)  # pragma: no mutate
+@dataclass
 class HeaderResponse(Node):
     """A node for `$response.header` expressions."""
 
-    parameter: str = attr.ib()  # pragma: no mutate
+    parameter: str
+    extractor: Extractor | None = None
 
     def evaluate(self, context: ExpressionContext) -> str:
-        return context.response.headers[self.parameter]
+        value = context.response.headers.get(self.parameter.lower())
+        if value is None:
+            return ""
+        if self.extractor is not None:
+            return self.extractor.extract(value[0]) or ""
+        return value[0]
 
 
-@attr.s(slots=True)  # pragma: no mutate
+@dataclass
 class BodyResponse(Node):
     """A node for `$response.body` expressions."""
 
-    pointer: Optional[str] = attr.ib(default=None)  # pragma: no mutate
+    pointer: str | None = None
 
     def evaluate(self, context: ExpressionContext) -> Any:
-        if isinstance(context.response, WSGIResponse):
-            document = context.response.json
-        else:
-            document = context.response.json()
+        document = context.response.json()
         if self.pointer is None:
             # We need the parsed document - data will be serialized before sending to the application
             return document
-        return pointers.resolve(document, self.pointer[1:])
+        resolved = resolve_pointer(document, self.pointer[1:])
+        if resolved is UNRESOLVABLE:
+            return None
+        return resolved

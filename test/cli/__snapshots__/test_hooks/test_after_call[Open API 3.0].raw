@@ -1,0 +1,74 @@
+Exit code: 1
+---
+Stdout:
+Schemathesis dev
+━━━━━━━━━━━━━━━━
+
+
+ ✅  Loaded specification from http://127.0.0.1/schema.yaml (in N ms)
+
+     Base URL:         http://127.0.0.1/api
+     Specification:    Open API 3.0.2
+     Operations:       1
+
+
+ ✅  API capabilities:
+
+     Supports NULL byte in headers:    ✘
+
+GET /api/success F                                                        [100%]
+
+=================================== FAILURES ===================================
+_______________________________ GET /api/success _______________________________
+1. Test Case ID: <PLACEHOLDER>
+
+- Response violates schema
+
+    'success' is a required property
+
+    Schema:
+
+        {
+            "properties": {
+                "success": {
+                    "type": "boolean"
+                }
+            },
+            "required": [
+                "success"
+            ],
+            "type": "object"
+        }
+
+    Value:
+
+        {
+            "wrong": 42
+        }
+
+[200] OK:
+
+    `{"wrong": 42}`
+
+Reproduce with:
+
+    curl -X GET http://127.0.0.1/api/success
+
+=================================== SUMMARY ====================================
+
+API Operations:
+  Selected: 1/1
+  Tested: 1
+
+Test Phases:
+  ✅ API probing
+  ❌ Unit testing
+  ⏭️ Stateful testing (not applicable)
+
+Failures:
+  ❌ Response violates schema: 1
+
+Test cases:
+  N generated, N found N unique failures
+
+============================= 1 failures in 1.00s ==============================

@@ -1,0 +1,55 @@
+Exit code: 1
+---
+Stdout:
+Schemathesis dev
+━━━━━━━━━━━━━━━━
+
+
+ ✅  Loaded specification from http://127.0.0.1/schema.yaml (in N ms)
+
+     Base URL:         http://127.0.0.1/api
+     Specification:    Open API 2.0
+     Operations:       1
+
+
+ ✅  API capabilities:
+
+     Supports NULL byte in headers:    ✘
+
+GET /api/slow F                                                           [100%]
+
+=================================== FAILURES ===================================
+________________________________ GET /api/slow _________________________________
+1. Test Case ID: <PLACEHOLDER>
+
+- Response time limit exceeded
+
+    Actual: 105.00ms
+    Limit: 50.00ms
+
+[200] OK:
+
+    `{"success": true}`
+
+Reproduce with:
+
+    curl -X GET http://127.0.0.1/api/slow
+
+=================================== SUMMARY ====================================
+
+API Operations:
+  Selected: 1/1
+  Tested: 1
+
+Test Phases:
+  ✅ API probing
+  ❌ Unit testing
+  ⏭️ Stateful testing (not applicable)
+
+Failures:
+  ❌ Response time limit exceeded: 1
+
+Test cases:
+  N generated, N found N unique failures
+
+============================= 1 failures in 1.00s ==============================

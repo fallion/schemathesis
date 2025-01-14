@@ -1,73 +1,75 @@
 Schemathesis as a Service
 =========================
 
-This library integrates with the Schemathesis.io platform, where you can store, view, and track issues found by Schemathesis.
+Schemathesis as a Service on `Schemathesis.io <https://app.schemathesis.io/auth/sign-up/?utm_source=oss_docs&utm_content=saas_docs_top>`_ provides a hosted environment, extending your testing capabilities with additional features accessible in both free and premium plans.
 
-.. important::
+.. note::
 
-    Schemathesis.io is currently in alpha and intended for testing only. If you want to try it out, ping me at **hello@schemathesis.io**.
+    For a step-by-step guide on getting started with Schemathesis.io, visit our `Quick Start Guide <https://docs.schemathesis.io/quick-start/>`_.
 
-Quickstart
-----------
+Schema Analysis (Experimental)
+------------------------------
 
-First, you need to add your API to Schemathesis.io by clicking on the "Add API" button and filling details in a form on that page:
+Schemathesis CLI now includes an experimental feature that integrates with Schemathesis.io to improve the efficiency and realism of generated test cases for better bug detection. This feature optimizes test case generation by:
 
-.. image:: https://raw.githubusercontent.com/schemathesis/schemathesis/master/img/service_no_apis_yet.png
+- Inferring "format" keywords for appropriate string data generation
+- Providing data generation strategies for uncommon media types (e.g., application/pdf)
+- Inferring data generation strategies for GraphQL scalars
+- Adjusting schemas for faster data generation in Schemathesis
+- Detecting the web server to generate more targeted test data and avoid rejected inputs
 
-Then get a token from the "Details" page by clicking on a little gear icon:
+By enabling this feature, you can potentially benefit from faster achievement of higher edge case coverage and tests that reach deeper into your API implementation.
 
-.. image:: https://raw.githubusercontent.com/schemathesis/schemathesis/master/img/service_gear_icon.png
+To enable schema analysis, use the ``--experimental=schema-analysis`` CLI option. It is also automatically enabled when the ``--report`` CLI option is used.
 
-Then you can find an API token there. Note that tokens are unique per API:
+.. note::
+ 
+    During the experimental phase, schema analysis is available free of charge and does not require signup. By using this feature, you automatically agree to Schemathesis.io's `Terms of Service <https://schemathesis.io/legal/terms>`_ and `Privacy Policy`_.
 
-.. image:: https://raw.githubusercontent.com/schemathesis/schemathesis/master/img/service_details.png
+Please note that this feature is still experimental, and its effectiveness may vary depending on the API being tested. We are actively refining the algorithms and techniques used. If you encounter any issues or have suggestions, please open an issue on our GitHub repository or reach out via our support channels.
 
-Once you got an API token, you can use it with Schemathesis CLI. Integrations with ``pytest`` and ``unittest`` are in the works.
+Uploading Reports to Schemathesis.io
+------------------------------------
 
-Command Line Interface
-~~~~~~~~~~~~~~~~~~~~~~
+When you use the Schemathesis CLI to run tests, you have the option to upload test reports to Schemathesis.io for a more detailed analysis and continuous tracking over time.
+This can be done by using the ``--report`` flag with your CLI commands.
 
-Add ``--schemathesis-io-token=<YOUR API TOKEN>`` to your Schemathesis CLI invocation:
+To store a report for later upload, you can first save it using the ``--report=report.tar.gz`` CLI option. Afterward, you can upload it with the ``st upload report.tar.gz`` command.
 
-.. code:: bash
+.. note::
 
-    schemathesis run http://127.0.0.1:8081/schema.yaml \
-      --schemathesis-io-token=6656aeaaf89046ef9180f42f9929871e
+    If the ``--report`` flag is not passed, or if its argument points to a local file, no data is sent to external services. Reports generated locally are fully self-contained and remain on your machine unless you explicitly upload them to Schemathesis.io using the upload command.
 
-Once all events are uploaded to Schemathesis.io you'll see a message at the end of the CLI output:
+    The content of the report includes all HTTP calls made during the test execution, providing transparency into the exact interactions Schemathesis performed.
 
-.. code:: text
+    This data helps improve the product's quality and usability by identifying edge cases, such as incompatible server behavior, but is only accessible to Schemathesis.io when the report is uploaded.
 
-    Schemathesis.io: COMPLETED
-    Report URL: https://app.schemathesis.io/r/mF9ke/
+What Data is Sent?
+------------------
 
-To observe the test run results, follow the link from the output.
+When you choose to upload your test reports, the following data is included in the reports sent to Schemathesis.io by the CLI:
 
-Features overview
------------------
+- **Metadata**:
 
-Schemathesis.io stores data about your test runs and aims to provide a convenient UI to navigate through found failures.
-These failures are aggregated into groups, so you can track recurring ones.
+  - Information about your host machine to help us understand our users better.
+  - Collected data includes your Python interpreter version, implementation, system/OS name, the used Docker image name (if any) and release.
 
-.. image:: https://raw.githubusercontent.com/schemathesis/schemathesis/master/img/service_issues_list.png
+- **Test Runs**:
 
-You also have better failure description and an ability to replay failures from the UI:
+  - Most of the Schemathesis runner's events are included, encompassing all generated data and explicitly passed headers.
+  - Sensitive data within the generated test cases and received responses is automatically sanitized by default, replaced with the string ``[Filtered]`` to prevent accidental exposure.
+  - Further information on what is considered sensitive and how it is sanitized can be found at :ref:`Sanitizing Output <sanitizing-output>`.
 
-.. image:: https://raw.githubusercontent.com/schemathesis/schemathesis/master/img/service_issue_detail.png
+- **Environment Variables**:
 
-You can use Schemathesis.io test runners instead of CLI. They have more checks & better data generation than Open Source Schemathesis.
+  - Some environment variables specific to CI providers are included.
+  - These are used to comment on pull requests.
 
-.. important::
+- **Command-Line Options**:
 
-    Again, it is an alpha version and I am delighted to hear from you! Please, if you miss any feature or have any comments on this, let me know.
+  - Command-line options without free-form values are sent to help us understand how you use the CLI.
+  - Rest assured, any sensitive data passed through command-line options is sanitized by default.
 
-How it works
-------------
+For more details on our data handling practices, please refer to our `Privacy Policy <https://schemathesis.io/legal/privacy>`_. If you have further questions or concerns about data handling, feel free to contact us at `support@schemathesis.io <mailto:support@schemathesis.io>`_.
 
-The integration is done with a separate event handler that sends events to Schemathesis.io in a separate thread.
-
-What data is sent to Schemathesis.io
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-At the moment, Schemathesis sends almost everything defined in ``schemathesis.runner.events``, so
-you have all information needed to reproduce failures. However, it might change in the future.
+For information on data access, retention, and deletion, please refer to the `FAQ section <https://docs.schemathesis.io/faq>`_ in our SaaS documentation.

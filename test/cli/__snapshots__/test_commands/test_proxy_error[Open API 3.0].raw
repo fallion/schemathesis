@@ -1,0 +1,47 @@
+Exit code: 1
+---
+Stdout:
+Schemathesis dev
+━━━━━━━━━━━━━━━━
+
+
+ ✅  Loaded specification from http://127.0.0.1/schema.yaml (in N ms)
+
+     Base URL:         http://127.0.0.1/api
+     Specification:    Open API 3.0.2
+     Operations:       1
+
+
+ 🚫  API probing failed: Connection failed
+
+GET /api/success E                                                        [100%]
+
+==================================== ERRORS ====================================
+_______________________________ GET /api/success _______________________________
+Network Error
+
+Connection failed
+
+    Unable to connect to proxy
+
+Need more help?
+    Join our Discord server: https://discord.gg/R9ASRAmHnA
+=================================== SUMMARY ====================================
+
+API Operations:
+  Selected: 1/1
+  Tested: 0
+  Errored: 1
+
+Test Phases:
+  🚫 API probing
+  🚫 Unit testing
+  ⏭️ Stateful testing (not applicable)
+
+Errors:
+  🚫 Network Error: 1
+
+Test cases:
+  N generated, N skipped
+
+============================== 1 errors in 1.00s ===============================

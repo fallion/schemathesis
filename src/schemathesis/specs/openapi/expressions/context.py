@@ -1,12 +1,14 @@
-import attr
+from __future__ import annotations
 
-from ....models import Case
-from ....utils import GenericResponse
+from dataclasses import dataclass
+
+from schemathesis.core.transport import Response
+from schemathesis.generation.case import Case
 
 
-@attr.s(slots=True)  # pragma: no mutate
+@dataclass
 class ExpressionContext:
     """Context in what an expression are evaluated."""
 
-    response: GenericResponse = attr.ib()  # pragma: no mutate
-    case: Case = attr.ib()  # pragma: no mutate
+    response: Response
+    case: Case

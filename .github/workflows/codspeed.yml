@@ -1,0 +1,29 @@
+name: Benchmarks
+
+on:
+  push:
+    branches:
+      - "master"
+  pull_request:
+  workflow_dispatch:
+
+env:
+  SCHEMATHESIS_BENCHMARK_SEED: "42"
+
+jobs:
+  benchmarks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4.2.1
+      - uses: actions/setup-python@v5
+        with:
+          # Python 3.12 for flamegraph support
+          python-version: "3.12"
+
+      - uses: hynek/setup-cached-uv@v2
+
+      - name: Run benchmarks
+        uses: CodSpeedHQ/action@v3
+        with:
+          token: ${{ secrets.CODSPEED_TOKEN }}
+          run: uvx --from=".[bench]" pytest benches/* --codspeed -p no:schemathesis -p no:hypothesispytest -p no:subtests -p no:anyio

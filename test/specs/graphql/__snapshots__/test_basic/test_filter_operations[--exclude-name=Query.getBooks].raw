@@ -1,0 +1,37 @@
+Exit code: 0
+---
+Stdout:
+Schemathesis dev
+━━━━━━━━━━━━━━━━
+
+
+ ✅  Loaded specification from http://127.0.0.1/graphql (in N ms)
+
+     Base URL:         http://127.0.0.1/graphql
+     Specification:    GraphQL
+     Operations:       4
+
+
+ ✅  API capabilities:
+
+     Supports NULL byte in headers:    ✓
+
+Query.getAuthors .                                                        [ 33%]
+Mutation.addBook .                                                        [ 66%]
+Mutation.addAuthor .                                                      [100%]
+
+=================================== SUMMARY ====================================
+
+API Operations:
+  Selected: 3/4
+  Tested: 3
+
+Test Phases:
+  ✅ API probing
+  ✅ Unit testing
+  ⏭️ Stateful testing (not supported)
+
+Test cases:
+  N generated, N passed
+
+=========================== No issues found in 1.00s ===========================

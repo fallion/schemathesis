@@ -7,7 +7,7 @@ from schemathesis.specs.openapi.examples import get_strategies_from_examples
 
 @pytest.fixture(scope="module")
 def schema():
-    return schemathesis.from_dict(
+    return schemathesis.openapi.from_dict(
         {
             "openapi": "3.0.2",
             "info": {"title": "Test", "description": "Test", "version": "0.1.0"},
@@ -30,7 +30,7 @@ def schema():
 @pytest.mark.hypothesis_nested
 def test_examples_validity(schema, openapi3_base_url):
     operation = next(schema.get_all_operations()).ok()
-    strategy = get_strategies_from_examples(operation, "examples")[0]
+    strategy = get_strategies_from_examples(operation, generation_config=schema.generation_config)[0]
 
     @given(case=strategy)
     @settings(deadline=None)

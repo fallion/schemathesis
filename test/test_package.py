@@ -1,17 +1,12 @@
 import sys
-
-from schemathesis._compat import metadata
+from importlib import metadata
 
 
 def test_dev_version(monkeypatch, mocker):
     # When Schemathesis is run in dev environment without installation
-    monkeypatch.delitem(sys.modules, "schemathesis.constants")
-    if sys.version_info < (3, 8):
-        path = "importlib_metadata.version"
-    else:
-        path = "importlib.metadata.version"
-    mocker.patch(path, side_effect=metadata.PackageNotFoundError)
-    from schemathesis.constants import __version__
+    monkeypatch.delitem(sys.modules, "schemathesis.core.version")
+    mocker.patch("importlib.metadata.version", side_effect=metadata.PackageNotFoundError)
+    from schemathesis.core.version import SCHEMATHESIS_VERSION
 
     # Then it's version is "dev"
-    assert __version__ == "dev"
+    assert SCHEMATHESIS_VERSION == "dev"

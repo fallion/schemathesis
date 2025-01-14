@@ -1,0 +1,74 @@
+Exit code: 1
+---
+Stdout:
+Schemathesis dev
+━━━━━━━━━━━━━━━━
+
+
+ ✅  Loaded specification from http://127.0.0.1/schema.yaml (in N ms)
+
+     Base URL:         http://127.0.0.1/api
+     Specification:    Open API 3.0.2
+     Operations:       4
+
+
+ ✅  API capabilities:
+
+     Supports NULL byte in headers:    ✘
+
+GET /api/failure F                                                        [ 25%]
+POST /api/users/ .                                                        [ 50%]
+GET /api/users/{user_id} .                                                [ 75%]
+PATCH /api/users/{user_id} .                                              [100%]
+
+Stateful tests
+
+...
+
+=================================== FAILURES ===================================
+_______________________________ GET /api/failure _______________________________
+1. Test Case ID: <PLACEHOLDER>
+
+- Server error
+
+[500] Internal Server Error:
+
+    `500: Internal Server Error`
+
+Reproduce with:
+
+    <PLACEHOLDER>
+
+________________________________ Stateful tests ________________________________
+1. Test Case ID: <PLACEHOLDER>
+
+- Server error
+
+[500] Internal Server Error:
+
+    `500 Internal Server Error
+
+    Server got itself in trouble`
+
+Reproduce with:
+
+    <PLACEHOLDER>
+
+=================================== SUMMARY ====================================
+
+API Operations:
+  Selected: 4/4
+  Tested: 4
+
+Test Phases:
+  ✅ API probing
+  ❌ Unit testing
+  ❌ Stateful testing
+
+Failures:
+  ❌ Server error: 2
+
+Test cases:
+  N generated, N found N unique failures
+
+============================= 2 failures in 1.00s ==============================

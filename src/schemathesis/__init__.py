@@ -1,28 +1,44 @@
-from ._compat import _install_hypothesis_jsonschema_compatibility_shim
+from __future__ import annotations
 
-_install_hypothesis_jsonschema_compatibility_shim()
+from schemathesis import auths, contrib, engine, errors, experimental, graphql, hooks, openapi, pytest, python
+from schemathesis.checks import CheckContext, CheckFunction, check
+from schemathesis.core.output import OutputConfig, sanitization
+from schemathesis.core.transport import Response
+from schemathesis.core.version import SCHEMATHESIS_VERSION
+from schemathesis.generation import GenerationConfig, GenerationMode, HeaderConfig
+from schemathesis.generation.case import Case
+from schemathesis.generation.targets import TargetContext, TargetFunction, target
 
-del _install_hypothesis_jsonschema_compatibility_shim
+__version__ = SCHEMATHESIS_VERSION
 
-from . import fixups, hooks, runner, serializers, targets
-from .cli import register_check, register_target
-from .constants import DataGenerationMethod, __version__
-from .models import Case
-from .specs import graphql, openapi
-from .specs.openapi._hypothesis import init_default_strategies, register_string_format
-from .utils import GenericResponse
+# Public API
+auth = auths.GLOBAL_AUTH_STORAGE
+hook = hooks.register
 
-init_default_strategies()
-
-# Is not a part of the public API
-del init_default_strategies
-
-# Default loaders
-from_aiohttp = openapi.from_aiohttp
-from_asgi = openapi.from_asgi
-from_dict = openapi.from_dict
-from_file = openapi.from_file
-from_path = openapi.from_path
-from_pytest_fixture = openapi.from_pytest_fixture
-from_uri = openapi.from_uri
-from_wsgi = openapi.from_wsgi
+__all__ = [
+    "Case",
+    "CheckContext",
+    "CheckFunction",
+    "GenerationMode",
+    "GenerationConfig",
+    "HeaderConfig",
+    "OutputConfig",
+    "Response",
+    "TargetContext",
+    "TargetFunction",
+    "__version__",
+    "auth",
+    "check",
+    "contrib",
+    "engine",
+    "errors",
+    "experimental",
+    "graphql",
+    "hook",
+    "hooks",
+    "openapi",
+    "pytest",
+    "python",
+    "sanitization",
+    "target",
+]
