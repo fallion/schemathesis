@@ -1,0 +1,46 @@
+Exit code: 0
+---
+Stdout:
+Schemathesis dev
+━━━━━━━━━━━━━━━━
+
+
+ ✅  Loaded specification from /tmp/schema.json (in N ms)
+
+     Base URL:         http://127.0.0.1/api
+     Specification:    Open API 3.0.2
+     Operations:       1 selected / 1 total
+
+
+ ✅  API capabilities:
+
+     Supports NULL byte in headers:    ✘
+
+ ✅  Unit tests (in N ms)
+
+     ✅ 1 passed
+
+================================= EXPERIMENTS ==================================
+
+🧪 Positive Data Acceptance: Verifying schema-conformant data is accepted
+   Feedback: https://github.com/schemathesis/schemathesis/discussions/2499
+
+Your feedback is crucial for experimental features. Please visit the provided URL(s) to share your thoughts.
+
+=================================== SUMMARY ====================================
+
+API Operations:
+  Selected: 1/1
+  Tested: 1
+
+Test Phases:
+  ✅ API probing
+  ✅ Unit testing
+  ⏭️ Stateful testing (not applicable)
+
+Test cases:
+  N generated, N passed
+
+Seed: 42
+
+=========================== No issues found in 1.00s ===========================

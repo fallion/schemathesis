@@ -1,251 +1,254 @@
-import json
 import pathlib
-from typing import Any, Dict
+import sys
+import threading
+from time import sleep
+from typing import NoReturn
 
 import hypothesis
 import pytest
-from hypothesis import HealthCheck, Phase
+from aiohttp.test_utils import unused_port
+from flask import Flask
+from hypothesis import HealthCheck, Phase, Verbosity
 
-from schemathesis.constants import RECURSIVE_REFERENCE_ERROR_MESSAGE
-from schemathesis.runner import events, from_schema
-from schemathesis.specs.openapi import loaders
+import schemathesis
+from schemathesis.checks import CHECKS
+from schemathesis.core.compat import RefResolutionError
+from schemathesis.core.errors import (
+    RECURSIVE_REFERENCE_ERROR_MESSAGE,
+    IncorrectUsage,
+    InvalidSchema,
+    InvalidStateMachine,
+    LoaderError,
+    format_exception,
+)
+from schemathesis.core.failures import Failure
+from schemathesis.core.result import Ok
+from schemathesis.engine import Status, events, from_schema
+from schemathesis.engine.config import EngineConfig, ExecutionConfig
+from schemathesis.generation import GenerationMode
+from schemathesis.generation.hypothesis.builder import _iter_coverage_cases
 
 CURRENT_DIR = pathlib.Path(__file__).parent.absolute()
-CATALOG_DIR = CURRENT_DIR / "openapi-directory/APIs/"
+sys.path.append(str(CURRENT_DIR.parent))
+
+from corpus.tools import json_loads, read_corpus_file  # noqa: E402
+
+CORPUS_FILE_NAMES = (
+    "swagger-2.0",
+    "openapi-3.0",
+    "openapi-3.1",
+)
+CORPUS_FILES = {name: read_corpus_file(name) for name in CORPUS_FILE_NAMES}
 
 
-def read_file(filename: str) -> Dict[str, Any]:
-    with (CURRENT_DIR / filename).open() as fd:
-        return json.load(fd)
+app = Flask("test_app")
 
 
-def get_id(path):
-    return str(path).replace(f"{CATALOG_DIR}/", "")
+def run_flask_app(app: Flask, port: int | None = None, timeout: float = 0.05) -> int:
+    if port is None:
+        port = unused_port()
+    server_thread = threading.Thread(target=app.run, kwargs={"port": port})
+    server_thread.daemon = True
+    server_thread.start()
+    sleep(timeout)
+    return port
+
+
+@app.route("/")
+def default():
+    return '{"success": true}'
 
 
 def pytest_generate_tests(metafunc):
-    allowed_schemas = (path for path in walk(CATALOG_DIR) if path.name in ("swagger.yaml", "openapi.yaml"))
-    metafunc.parametrize("schema_path", allowed_schemas, ids=get_id)
+    filenames = [(filename, member.name) for filename, corpus in CORPUS_FILES.items() for member in corpus.getmembers()]
+    metafunc.parametrize("corpus, filename", filenames)
 
 
-def walk(path: pathlib.Path):
-    # It is a bit faster than `glob`
-    if path.is_dir():
-        for item in path.iterdir():
-            yield from walk(item)
-    else:
-        yield path
-
-
-AZURE_FAILING_SCHEMAS = (
-    f"azure.com/network-networkProfile/{date}/swagger.yaml"
-    for date in (
-        "2018-10-01",
-        "2018-11-01",
-        "2018-12-01",
-        "2019-02-01",
-        "2019-04-01",
-        "2019-06-01",
-        "2019-07-01",
-        "2019-08-01",
-    )
-)
-XFAILING = {
-    # https://github.com/schemathesis/schemathesis/issues/986
-    schema: {
-        "PUT /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/"
-        "networkProfiles/{networkProfileName}": "hypothesis-jsonschema does not fetch remote references",
-    }
-    for schema in AZURE_FAILING_SCHEMAS
+SLOW = {
+    "stripe.com/2020-08-27.json",
+    "azure.com/network-applicationGateway/2018-08-01.json",
+    "azure.com/network-applicationGateway/2019-06-01.json",
+    "azure.com/network-applicationGateway/2017-11-01.json",
+    "azure.com/network-applicationGateway/2019-02-01.json",
+    "azure.com/network-applicationGateway/2017-10-01.json",
+    "azure.com/network-applicationGateway/2019-07-01.json",
+    "azure.com/network-applicationGateway/2018-12-01.json",
+    "azure.com/network-applicationGateway/2018-02-01.json",
+    "azure.com/network-applicationGateway/2019-08-01.json",
+    "azure.com/network-applicationGateway/2018-06-01.json",
+    "azure.com/network-applicationGateway/2018-07-01.json",
+    "azure.com/network-applicationGateway/2015-06-15.json",
+    "azure.com/network-applicationGateway/2018-04-01.json",
+    "azure.com/network-applicationGateway/2017-09-01.json",
+    "azure.com/network-applicationGateway/2018-10-01.json",
+    "azure.com/network-applicationGateway/2018-11-01.json",
+    "azure.com/network-applicationGateway/2016-12-01.json",
+    "azure.com/network-applicationGateway/2018-01-01.json",
+    "azure.com/network-applicationGateway/2017-08-01.json",
+    "azure.com/network-applicationGateway/2017-03-01.json",
+    "azure.com/network-applicationGateway/2019-04-01.json",
+    "azure.com/network-applicationGateway/2016-09-01.json",
+    "azure.com/network-applicationGateway/2017-06-01.json",
+    "azure.com/web-WebApps/2018-02-01.json",
+    "azure.com/web-WebApps/2019-08-01.json",
+    "azure.com/web-WebApps/2018-11-01.json",
+    "azure.com/web-WebApps/2016-08-01.json",
+    "azure.com/devtestlabs-DTL/2016-05-15.json",
+    "azure.com/devtestlabs-DTL/2018-09-15.json",
+    "amazonaws.com/resource-groups/2017-11-27.json",
+    "amazonaws.com/ivs/2020-07-14.json",
+    "amazonaws.com/workspaces-web/2020-07-08.json",
+    "presalytics.io/ooxml/0.1.0.json",
+    "kubernetes.io/v1.10.0.json",
+    "kubernetes.io/unversioned.json",
+    "microsoft.com/graph/1.0.1.json",
+    "microsoft.com/graph-beta/1.0.1.json",
+    "wedpax.com/v1.json",
+    "stripe.com/2022-11-15.json",
+    "xero.com/xero-payroll-au/2.9.4.json",
+    "xero.com/xero_accounting/2.9.4.json",
+    "portfoliooptimizer.io/1.0.9.json",
+    "amazonaws.com/proton/2020-07-20.json",
+    "bungie.net/2.18.0.json",
+    "amazonaws.com/sagemaker-geospatial/2020-05-27.json",
 }
-
-# These are too big, but can pass
-FLAKY_SCHEMAS = read_file("flaky.json")
-# These schemas reference local files that are not present.
-# Schemas are versioned by date, the final path looks like this:
-# `azure.com/{service}/{date}/swagger.yaml`
-INCOMPLETE_AZURE_SCHEMAS = read_file("incomplete_azure.json")
-REFERENCE_ERROR_MISSING_FILE = (
-    "jsonschema.exceptions.RefResolutionError: <urlopen error [Errno 2] No such file or directory"
-)
-NOT_PARSABLE_SCHEMAS = {
-    "zenoti.com/1.0.0/swagger.yaml": "yaml.scanner.ScannerError: while scanning a block scalar",
-    "epa.gov/eff/2019.10.15/swagger.yaml": "ConstructorError: could not determine a constructor for the tag",
-    # `18_24` is parsed as 1824, but it should be a string
-    "statsocial.com/1.0.0/swagger.yaml": "jsonschema.exceptions.RefResolutionError: Unresolvable JSON pointer",
-    "azure.com/cognitiveservices-LUIS-Authoring/2.0/swagger.yaml": "yaml.constructor.ConstructorError: could not determine a constructor for the tag",
-    "azure.com/cognitiveservices-LUIS-Authoring/3.0-preview/swagger.yaml": "yaml.constructor.ConstructorError: could not determine a constructor for the tag",
-    "azure.com/cognitiveservices-LUIS-Programmatic/v2.0/swagger.yaml": "yaml.constructor.ConstructorError: could not determine a constructor for the tag",
-    "atlassian.com/jira/1001.0.0-SNAPSHOT/openapi.yaml": "yaml.constructor.ConstructorError: could not determine a constructor for the tag",
-    "akeneo.com/1.0.0/swagger.yaml": "yaml.constructor.ConstructorError: could not determine a constructor for the tag",
-    "adyen.com/PaymentService/30/openapi.yaml": "found a tab character where an indentation space is expected",
-    "adyen.com/PaymentService/40/openapi.yaml": "found a tab character where an indentation space is expected",
-    "adyen.com/CheckoutService/40/openapi.yaml": "found a tab character where an indentation space is expected",
-    "bunq.com/1.0/openapi.yaml": "yaml.parser.ParserError: while parsing a block mapping",
-    "adyen.com/CheckoutService/46/openapi.yaml": "yaml.scanner.ScannerError: while scanning a block scalar",
-    "adyen.com/CheckoutService/41/openapi.yaml": "yaml.scanner.ScannerError: while scanning a block scalar",
-    "adyen.com/CheckoutService/37/openapi.yaml": "yaml.scanner.ScannerError: while scanning a block scalar",
-    "adyen.com/PaymentService/46/openapi.yaml": "yaml.scanner.ScannerError: while scanning a block scalar",
-    "adyen.com/PaymentService/25/openapi.yaml": "yaml.scanner.ScannerError: while scanning a block scalar",
-    "docusign.net/v2/swagger.yaml": "yaml.reader.ReaderError: unacceptable character #x0080: control characters are not allowed",
-    **{
-        f"azure.com/{service}/{date}/swagger.yaml": REFERENCE_ERROR_MISSING_FILE
-        for service, dates in INCOMPLETE_AZURE_SCHEMAS.items()
-        for date in dates
-    },
-}
-INVALID_SCHEMAS = (
-    # `on` is parsed as `True` and makes the canonicalisation encoder to fail
-    "victorops.com/0.0.3/swagger.yaml",
-    "launchdarkly.com/3.10.0/swagger.yaml",
-)
-RECURSIVE_REFERENCES = read_file("recursive_references.json")
-
-UNSATISFIABLE_SCHEMAS = {
-    "amazonaws.com/s3control/2018-08-20/openapi.yaml": (
-        # Too broad regex that lead to excessive filtering
-        "DELETE /v20180820/jobs/{id}/tagging#x-amz-account-id",
-        "GET /v20180820/jobs/{id}/tagging#x-amz-account-id",
-        "PUT /v20180820/jobs/{id}/tagging#x-amz-account-id",
-        "GET /v20180820/jobs/{id}#x-amz-account-id",
-        "POST /v20180820/jobs/{id}/priority#x-amz-account-id&priority",
-        "POST /v20180820/jobs/{id}/status#x-amz-account-id&requestedJobStatus",
-    ),
-    "amazonaws.com/application-insights/2018-11-25/openapi.yaml": (
-        "POST /#X-Amz-Target=EC2WindowsBarleyService.UntagResource",
-    ),
-    "amazonaws.com/elasticfilesystem/2015-02-01/openapi.yaml": (
-        "POST /2015-02-01/delete-tags/{FileSystemId}",
-        "DELETE /2015-02-01/resource-tags/{ResourceId}#tagKeys",
-    ),
-    "amazonaws.com/codestar/2017-04-19/openapi.yaml": (
-        # Regex contains a value that is not properly escaped
-        "POST /#X-Amz-Target=CodeStar_20170419.CreateUserProfile",
-    ),
-    "amazonaws.com/cloudhsm/2014-05-30/openapi.yaml": (
-        # Regex + min/max length that leads to excessive filtering
-        "POST /#X-Amz-Target=CloudHsmFrontendService.CreateLunaClient",
-        "POST /#X-Amz-Target=CloudHsmFrontendService.ModifyLunaClient",
-    ),
-    "shipengine.com/1.1.202006302006/openapi.yaml": (
-        # Inaccurate usage of `additionalProperties: False` + `allOf` that lead to a schema that is impossible to
-        # satisfy
-        "PUT /v1/carriers/{carrier_id}/add_funds",
-        "PATCH /v1/insurance/shipsurance/add_funds",
-        "POST /v1/labels",
-        "POST /v1/packages",
-        "PUT /v1/packages/{package_id}",
-        "POST /v1/rates",
-        "POST /v1/rates/bulk",
-        "POST /v1/rates/estimate",
-        "POST /v1/shipments",
-        "PUT /v1/shipments",
-        "PUT /v1/shipments/{shipment_id}",
-        "POST /v1/warehouses",
-        "PUT /v1/warehouses/{warehouse_id}",
-    ),
-    "windows.net/graphrbac/1.6/swagger.yaml": (
-        # `additionalProperties` conflicts with some properties
-        "POST /{tenantID}/users",
-    ),
+KNOWN_ISSUES = {
+    # Regex that includes surrogates which is incompatible with the default alphabet for regex in Hypothesis (UTF-8)
+    ("amazonaws.com/cleanrooms/2022-02-17.json", "POST /collaborations"),
+    ("amazonaws.com/cleanrooms/2022-02-17.json", "POST /configuredTables"),
 }
 
 
-def add_schemas(filename):
-    for schema_id, operations in read_file(filename).items():
-        if schema_id in UNSATISFIABLE_SCHEMAS:
-            UNSATISFIABLE_SCHEMAS[schema_id] += operations
-        else:
-            UNSATISFIABLE_SCHEMAS[schema_id] = operations
+@pytest.fixture(scope="session")
+def app_port():
+    return run_flask_app(app)
 
 
-for name in ("invalid_path_parameters.json", "incompatible_regex.json", "incompatible_enums.json"):
-    add_schemas(name)
+def combined_check(ctx, response, case):
+    case.as_curl_command()
+    for check in CHECKS.get_all():
+        try:
+            check(ctx, response, case)
+        except Failure:
+            pass
 
 
-def test_runner(schema_path):
-    schema = loaders.from_path(schema_path, validate_schema=False)
-    runner = from_schema(
+def test_default(corpus, filename, app_port):
+    schema = _load_schema(corpus, filename, app_port)
+    try:
+        schema.as_state_machine()()
+    except (RefResolutionError, IncorrectUsage, LoaderError, InvalidSchema, InvalidStateMachine):
+        pass
+
+    engine = from_schema(
         schema,
-        dry_run=True,
-        count_operations=False,
-        hypothesis_settings=hypothesis.settings(
-            max_examples=1, suppress_health_check=HealthCheck.all(), phases=[Phase.explicit, Phase.generate]
+        config=EngineConfig(
+            execution=ExecutionConfig(
+                checks=[combined_check],
+                hypothesis_settings=hypothesis.settings(
+                    deadline=None,
+                    database=None,
+                    max_examples=1,
+                    suppress_health_check=list(HealthCheck),
+                    phases=[Phase.explicit, Phase.generate],
+                    verbosity=Verbosity.quiet,
+                ),
+            )
         ),
     )
+    for event in engine.execute():
+        if isinstance(event, events.Interrupted):
+            pytest.exit("Keyboard Interrupt")
+        assert_event(filename, event)
 
-    schema_id = get_id(schema_path)
 
-    def check_xfailed(ev) -> bool:
-        if schema_id in XFAILING and ev.current_operation in XFAILING[schema_id]:
-            if ev.result.errors:
-                message = XFAILING[schema_id][ev.current_operation]
-                # If is is failed for some other reason, then an assertion will be risen
-                return any(message in err.exception_with_traceback for err in ev.result.errors)
-            pytest.fail("Expected a failure")
-        return False
+def test_coverage_phase(corpus, filename):
+    schema = _load_schema(corpus, filename)
+    modes = GenerationMode.all()
+    for operation in schema.get_all_operations():
+        if isinstance(operation, Ok):
+            for _ in _iter_coverage_cases(operation.ok(), modes):
+                pass
 
-    def is_unsatisfiable(text):
-        return "Unable to satisfy schema parameters for this API operation" in text
 
-    def check_flaky(ev) -> bool:
-        if schema_id in FLAKY_SCHEMAS and ev.current_operation in FLAKY_SCHEMAS[schema_id]:
-            if ev.result.errors:
-                # NOTE. There could be other errors if the "Unsatisfiable" case wasn't triggered.
-                # Could be added to expected errors later
-                return any(is_unsatisfiable(err.exception_with_traceback) for err in ev.result.errors)
-        return False
+def _load_schema(corpus, filename, app_port=None):
+    if filename in SLOW:
+        pytest.skip("Data generation is extremely slow for this schema")
+    raw_content = CORPUS_FILES[corpus].extractfile(filename)
+    raw_schema = json_loads(raw_content.read())
+    try:
+        return schemathesis.openapi.from_dict(raw_schema).configure(
+            base_url=f"http://127.0.0.1:{app_port}/" if app_port is not None else None,
+        )
+    except LoaderError as exc:
+        assert_invalid_schema(exc)
 
-    def check_unsatisfiable(ev):
-        # In some cases Schemathesis can't generate data - either due to a contradiction within the schema
-        if schema_id in UNSATISFIABLE_SCHEMAS and ev.current_operation in UNSATISFIABLE_SCHEMAS[schema_id]:
-            exception = ev.result.errors[0].exception
-            if (
-                "Unable to satisfy schema parameters for this API operation" not in exception
-                and "Cannot create non-empty lists with elements" not in exception
-                and "Cannot create a collection of " not in exception
-            ):
-                pytest.fail(f"Expected unsatisfiable, but there is a different error: {exception}")
-            return True
-        return False
 
-    def check_recursive_references(ev):
-        if schema_id in RECURSIVE_REFERENCES and ev.current_operation in RECURSIVE_REFERENCES[schema_id]:
-            for err in ev.result.errors:
-                if RECURSIVE_REFERENCE_ERROR_MESSAGE in err.exception_with_traceback:
-                    # It is OK
-                    return True
-            # These errors may be triggered not every time
-        return False
+def assert_invalid_schema(exc: LoaderError) -> NoReturn:
+    error = str(exc.__cause__)
+    if (
+        "while scanning a block scalar" in error
+        or "while parsing a block mapping" in error
+        or "could not determine a constructor for the tag" in error
+        or "unacceptable character" in error
+    ):
+        pytest.skip("Invalid schema")
+    raise exc
 
-    def check_not_parsable(ev):
-        return schema_id in NOT_PARSABLE_SCHEMAS and NOT_PARSABLE_SCHEMAS[schema_id] in ev.exception_with_traceback
 
-    def check_invalid(ev):
-        if schema_id in INVALID_SCHEMAS:
-            if ev.result.errors:
-                return any(
-                    "The API schema contains non-string keys" in err.exception_with_traceback
-                    for err in ev.result.errors
-                )
-            return pytest.fail("Expected YAML parsing error")
-        return False
+def assert_event(schema_id: str, event: events.EngineEvent) -> None:
+    if isinstance(event, events.NonFatalError):
+        if not should_ignore_error(schema_id, event):
+            raise AssertionError(f"{event.label}: {event.info.format()}")
+    if isinstance(event, events.ScenarioFinished):
+        failures = [
+            check for checks in event.recorder.checks.values() for check in checks if check.status == Status.FAILURE
+        ]
+        assert not failures
+        # Errors are checked above and unknown ones cause a test failure earlier
+        assert event.status in (Status.SUCCESS, Status.SKIP, Status.ERROR)
+    if isinstance(event, events.FatalError):
+        raise AssertionError(f"Internal Error: {format_exception(event.exception, with_traceback=True)}")
 
-    for event in runner.execute():
-        if isinstance(event, events.AfterExecution):
-            if check_xfailed(event):
-                continue
-            if check_flaky(event):
-                continue
-            if check_recursive_references(event):
-                continue
-            if check_unsatisfiable(event):
-                continue
-            if check_invalid(event):
-                continue
-            assert not event.result.has_errors, event.current_operation
-            assert not event.result.has_failures, event.current_operation
-        if isinstance(event, events.InternalError):
-            if check_not_parsable(event):
-                continue
-        assert not isinstance(event, events.InternalError), event.exception_with_traceback
+
+def should_ignore_error(schema_id: str, event: events.NonFatalError) -> bool:
+    formatted = event.info.format()
+    if (
+        schema_id == "launchdarkly.com/3.10.0.json" or schema_id == "launchdarkly.com/5.3.0.json"
+    ) and "'<' not supported between instances" in formatted:
+        return True
+    if (
+        "is not a 'regex'" in formatted
+        or "Invalid regular expression" in formatted
+        or "Invalid `pattern` value: expected a string" in formatted
+    ):
+        return True
+    if "Failed to generate test cases for this API operation" in formatted:
+        return True
+    if "Failed to generate test cases from examples for this API operation" in formatted:
+        return True
+    if "FailedHealthCheck" in formatted:
+        return True
+    if "Schemathesis can't serialize data" in formatted:
+        return True
+    if "Malformed media type" in formatted:
+        return True
+    if "Path parameter" in formatted and formatted.endswith("is not defined"):
+        return True
+    if "Malformed path template" in formatted:
+        return True
+    if "Unresolvable JSON pointer" in formatted:
+        return True
+    if "Ensure that the definition complies with the OpenAPI specification" in formatted:
+        return True
+    if "references non-existent operation" in formatted:
+        return True
+    if "is not defined in API operation" in formatted:
+        return True
+    if "contain invalid link definitions" in formatted:
+        return True
+    if RECURSIVE_REFERENCE_ERROR_MESSAGE in formatted:
+        return True
+    if (schema_id, event.label) in KNOWN_ISSUES:
+        return True
+    return False

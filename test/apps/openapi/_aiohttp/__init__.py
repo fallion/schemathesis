@@ -1,8 +1,10 @@
+import warnings
 from functools import wraps
 from typing import Callable, Tuple
 
 import yaml
 from aiohttp import web
+from aiohttp.web_exceptions import NotAppKeyWarning
 
 from ..schema import OpenAPIVersion, Operation, make_openapi_schema
 from . import handlers
@@ -20,6 +22,7 @@ def create_app(
     >>>     # make some request to the app here
     >>>     assert app["incoming_requests"][0].method == "GET"
     """
+    warnings.simplefilter("ignore", NotAppKeyWarning)
     incoming_requests = []
     schema_requests = []
 
@@ -36,20 +39,27 @@ def create_app(
         return response
 
     def wrapper(handler_name: str) -> Callable:
-
         handler = getattr(handlers, handler_name)
 
         @wraps(handler)
         async def inner(request: web.Request) -> web.Response:
             await request.read()  # to introspect the payload in tests
             incoming_requests.append(request)
-            return await handler(request)
+            response = await handler(request)
+            if app["config"]["chunked"]:
+                response.headers["Transfer-Encoding"] = "chunked"
+            return response
 
         return inner
 
     app = web.Application()
     app.add_routes(
-        [web.get("/schema.yaml", schema), web.get("/api/cookies", set_cookies)]
+        [
+            web.get("/schema.yaml", schema),
+            web.get("/api/cookies", set_cookies),
+            web.get("/api/binary", handlers.binary),
+            web.get("/api/long", handlers.long),
+        ]
         + [web.route(item.value[0], item.value[1], wrapper(item.name)) for item in Operation if item.name != "all"]
     )
 
@@ -60,7 +70,11 @@ def create_app(
     app["users"] = {}
     app["incoming_requests"] = incoming_requests
     app["schema_requests"] = schema_requests
-    app["config"] = {"should_fail": True, "schema_data": make_openapi_schema(operations, version)}
+    app["config"] = {
+        "should_fail": True,
+        "schema_data": make_openapi_schema(operations, version),
+        "chunked": False,
+    }
     return app
 
 
@@ -73,4 +87,10 @@ def reset_app(
     app["users"].clear()
     app["incoming_requests"][:] = []
     app["schema_requests"][:] = []
-    app["config"].update({"should_fail": True, "schema_data": make_openapi_schema(operations, version)})
+    app["config"].update(
+        {
+            "should_fail": True,
+            "schema_data": make_openapi_schema(operations, version),
+            "chunked": False,
+        }
+    )

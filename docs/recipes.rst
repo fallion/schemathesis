@@ -10,7 +10,7 @@ Sometimes, during testing, it is needed to disable TLS verification of the servi
 
 .. code-block:: text
 
-    schemathesis run http://localhost/schema.json --request-tls-verify
+    st run http://127.0.0.1/schema.json --request-tls-verify
 
 **Python**
 
@@ -18,7 +18,7 @@ Sometimes, during testing, it is needed to disable TLS verification of the servi
 
     import schemathesis
 
-    schema = schemathesis.from_uri("http://localhost/schema.json")
+    schema = schemathesis.openapi.from_uri("http://127.0.0.1/schema.json")
 
 
     @schema.parametrize()
@@ -28,98 +28,18 @@ Sometimes, during testing, it is needed to disable TLS verification of the servi
         # Alternatively if you don't need `response`
         case.call_and_validate(verify=False)
 
-Authentication
---------------
-
-Most of the APIs are not public and require some form of authentication.
-
-**CLI**
-
-Schemathesis CLI accepts ``--auth`` option for Basic Auth:
-
-.. code:: text
-
-    schemathesis run --auth username:$PASSWORD ...
-
-Alternatively, use ``--header`` to set the ``Authorization`` header directly:
-
-.. code:: text
-
-    schemathesis run -H "Authorization: Bearer TOKEN" ...
-
-
-It is possible to specify more custom headers to be sent with each request. Each header value should be in the ``KEY: VALUE`` format.
-You can also provide multiple headers by using the ``-H`` option multiple times:
-
-.. code:: text
-
-    schemathesis run -H "Authorization: ..." -H "X-API-Key: ..."
-
-
-It is possible to authenticate with an unencrypted certificate (e.g. PEM) by using the ``--request-cert /file/path/example.pem`` argument.
+It is possible to use an unencrypted certificate (e.g. PEM) by using the ``--request-cert /file/path/example.pem`` argument.
 
 .. code-block:: text
 
-    schemathesis run --request-cert client.pem ...
+    st run --request-cert client.pem ...
 
 
 It is also possible to provide the certificate and the private key separately with the usage of the ``--request-cert-key /file/path/example.key`` argument.
 
 .. code-block:: text
 
-    schemathesis run --request-cert client.crt --request-cert-key client.key ...
-
-
-**Python**
-
-``case.call`` and ``case.call_and_validate`` proxy custom keyword arguments to ``requests.Session.request``. Therefore, you can use ``auth``:
-
-.. code-block:: python
-
-    import schemathesis
-
-    SCHEMA_URL = "http://localhost/schema.json"
-
-    schema = schemathesis.from_uri(SCHEMA_URL)
-
-
-    @schema.parametrize()
-    def test_api(case):
-        # If you need `response`
-        response = case.call(auth=("user", "password"))
-        # Alternatively if you don't need `response`
-        case.call_and_validate(auth=("user", "password"))
-
-Token-based authentication via a separate ``pytest`` fixture:
-
-.. code-block:: python
-
-    import pytest
-    import schemathesis
-
-    SCHEMA_URL = "http://localhost/schema.json"
-    LOGIN_ENDPOINT = "http://localhost/api/login/"
-
-    schema = schemathesis.from_uri(SCHEMA_URL)
-
-
-    @pytest.fixture
-    def token():
-        # Make a login request
-        response = requests.post(
-            LOGIN_ENDPOINT, json={"login": "test", "password": "password"}
-        )
-        # Parse the response and extract token
-        return response.json()["auth_token"]
-
-
-    @schema.parametrize()
-    def test_api(case, token):
-        # `headers` may be `None`, depending on your schema
-        case.headers = case.headers or {}
-        case.headers["Authorization"] = f"Bearer {token}"
-        # Run the usual testing code below
-        case.call_and_validate()
+    st run --request-cert client.crt --request-cert-key client.key ...
 
 Using an HTTP(S) proxy
 ----------------------
@@ -130,7 +50,7 @@ Sometimes you need to send your traffic to some other tools. You could set up a 
 
     $ export HTTP_PROXY="http://10.10.1.10:3128"
     $ export HTTPS_PROXY="http://10.10.1.10:1080"
-    $ schemathesis run http://localhost/schema.json
+    $ st run http://127.0.0.1/schema.json
 
 Per-route request timeouts
 --------------------------
@@ -142,8 +62,8 @@ Different API operations may need different timeouts during testing. You could a
     import schemathesis
 
     DEFAULT_TIMEOUT = 10  # in seconds
-    SCHEMA_URL = "http://localhost/schema.json"
-    schema = schemathesis.from_uri(SCHEMA_URL)
+    SCHEMA_URL = "http://127.0.0.1/schema.json"
+    schema = schemathesis.openapi.from_uri(SCHEMA_URL)
 
 
     @schema.parametrize()
@@ -159,3 +79,44 @@ Different API operations may need different timeouts during testing. You could a
         case.call_and_validate(timeout=timeout)
 
 In the example above, the default timeout is 10 seconds, but for `GET /users` it will be 5 seconds.
+
+Generating only required parameters
+-----------------------------------
+
+Sometimes you don't need to generate all parameters for your API, and want to limit Schemathesis to only required ones.
+You can do it with the following hook:
+
+.. code-block:: python
+
+    import schemathesis
+
+
+    @schemathesis.hook
+    def before_init_operation(context, operation):
+        for parameter in operation.iter_parameters():
+            schema = parameter.definition.get("schema", {})
+            transform(schema, drop_optional_properties)
+        for alternative in operation.body:
+            schema = alternative.definition.get("schema", {})
+            transform(schema, drop_optional_properties)
+
+
+    def transform(schema, callback):
+        if isinstance(schema, dict):
+            schema = callback(schema)
+            for key, sub_item in schema.items():
+                schema[key] = transform(sub_item, callback)
+        elif isinstance(schema, list):
+            schema = [transform(sub_item, callback) for sub_item in schema]
+        return schema
+
+
+    def drop_optional_properties(schema):
+        required = schema.get("required", [])
+        properties = schema.get("properties", {})
+        for name in list(properties):
+            if name not in required:
+                del properties[name]
+        return schema
+
+This hook will remove all optional properties from the parsed API operations.

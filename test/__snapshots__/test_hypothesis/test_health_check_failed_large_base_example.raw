@@ -1,0 +1,60 @@
+Exit code: 1
+---
+Stdout:
+Schemathesis dev
+━━━━━━━━━━━━━━━━
+
+
+ ✅  Loaded specification from /tmp/schema.json (in N ms)
+
+     Base URL:         http://127.0.0.1/api
+     Specification:    Open API 3.0.2
+     Operations:       1 selected / 1 total
+
+
+ ✅  API capabilities:
+
+     Supports NULL byte in headers:    ✘
+
+ 🚫  Unit tests (in N ms)
+
+     🚫 1 errors
+
+==================================== ERRORS ====================================
+__________________________________ POST /data __________________________________
+Failed Health Check
+
+A health check has identified that the smallest example derived from the schema
+is excessively large, potentially leading to inefficient test execution.
+
+This is commonly due to schemas that specify large-scale data structures by
+default, such as an array with an extensive number of elements.
+
+Consider revising the schema to more accurately represent typical use cases
+or applying constraints to reduce the data size.
+
+Tip: Bypass this health check using `--suppress-health-check=large_base_example`.
+
+Need more help?
+    Join our Discord server: https://discord.gg/R9ASRAmHnA
+=================================== SUMMARY ====================================
+
+API Operations:
+  Selected: 1/1
+  Tested: 0
+  Errored: 1
+
+Test Phases:
+  ✅ API probing
+  🚫 Unit testing
+  ⏭️ Stateful testing (not applicable)
+
+Errors:
+  🚫 Failed Health Check: 1
+
+Test cases:
+  No test cases were generated
+
+Seed: 42
+
+=============================== 1 error in 1.00s ===============================

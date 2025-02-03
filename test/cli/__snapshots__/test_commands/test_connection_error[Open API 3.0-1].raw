@@ -1,0 +1,57 @@
+Exit code: 1
+---
+Stdout:
+Schemathesis dev
+━━━━━━━━━━━━━━━━
+
+
+ ✅  Loaded specification from http://127.0.0.1/schema.yaml (in N ms)
+
+     Base URL:         http://127.0.0.1:1/api
+     Specification:    Open API 3.0.2
+     Operations:       2 selected / 2 total
+
+
+ 🚫  API probing failed: Connection failed
+
+ 🚫  Unit tests (in N ms)
+
+     🚫 2 errors
+
+==================================== ERRORS ====================================
+_________________________________ GET /failure _________________________________
+Network Error
+
+Connection failed
+
+    Failed to establish a new connection: [Error NUM] Connection refused
+_________________________________ GET /success _________________________________
+Network Error
+
+Connection failed
+
+    Failed to establish a new connection: [Error NUM] Connection refused
+
+Need more help?
+    Join our Discord server: https://discord.gg/R9ASRAmHnA
+=================================== SUMMARY ====================================
+
+API Operations:
+  Selected: 2/2
+  Tested: 0
+  Errored: 2
+
+Test Phases:
+  🚫 API probing
+  🚫 Unit testing
+  ⏭️ Stateful testing (not applicable)
+
+Errors:
+  🚫 Network Error: 2
+
+Test cases:
+  N generated, N skipped
+
+Seed: 42
+
+============================== 2 errors in 1.00s ===============================

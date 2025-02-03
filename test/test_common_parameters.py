@@ -11,7 +11,6 @@ def test_common_parameters(testdir):
 @settings(max_examples=1)
 def test_(request, case):
     request.config.HYPOTHESIS_CASES += 1
-    assert case.full_path == "/v1/users"
     assert case.method in ["GET", "POST"]
     assert_int(case.query["common_id"])
     assert_int(case.query["not_common_id"])
@@ -44,19 +43,18 @@ def test_common_parameters_with_references(testdir):
         """
 def impl(request, case):
     request.config.HYPOTHESIS_CASES += 1
-    assert case.full_path == "/v1/foo"
     assert case.method in ["PUT", "POST"]
     if case.method == "POST":
         assert_int(case.body)
     assert_int(case.query["not_common_id"])
     assert_int(case.query["key"])
 
-@schema.parametrize(endpoint="/foo")
+@schema.include(path_regex="/foo").parametrize()
 @settings(max_examples=1)
 def test_a(request, case):
     impl(request, case)
 
-@schema.parametrize(endpoint="/foo")
+@schema.include(path_regex="/foo").parametrize()
 @settings(max_examples=1)
 def test_b(request, case):
     impl(request, case)
@@ -86,47 +84,50 @@ def test_b(request, case):
     result.stdout.re_match_lines([r"Hypothesis calls: 4$"])
 
 
-def test_common_parameters_with_references_stateful(empty_open_api_2_schema):
+def test_common_parameters_with_references_stateful(ctx):
     # When common parameter that is shared on an API operation level contains a reference
     # And used in stateful tests
     responses = {"responses": {"200": {"description": "OK"}}}
-    empty_open_api_2_schema["paths"] = {
-        "/foo": {
-            "parameters": [
-                {"$ref": "#/parameters/Param"},
-                {"schema": {"$ref": "#/definitions/SimpleIntRef"}, "in": "body", "name": "id", "required": True},
-            ],
-            "put": {"parameters": [integer(name="not_common_id", required=True)], **responses},
-            "post": {
-                "operationId": "post-foo",
-                "parameters": [integer(name="not_common_id", required=True)],
-                **responses,
+    schema = ctx.openapi.build_schema(
+        {
+            "/foo": {
+                "parameters": [
+                    {"$ref": "#/parameters/Param"},
+                    {"schema": {"$ref": "#/definitions/SimpleIntRef"}, "in": "body", "name": "id", "required": True},
+                ],
+                "put": {"parameters": [integer(name="not_common_id", required=True)], **responses},
+                "post": {
+                    "operationId": "post-foo",
+                    "parameters": [integer(name="not_common_id", required=True)],
+                    **responses,
+                },
             },
-        },
-        "/bar": {
-            "post": {
-                "responses": {
-                    "200": {
-                        "x-links": {
-                            "FooPut": {"operationRef": "#/paths/~1foo/put", "parameters": {"not_common_id": 42}},
-                            "FooPOST": {"operationId": "post-foo", "parameters": {"not_common_id": 42}},
-                        },
-                        "description": "OK",
+            "/bar": {
+                "post": {
+                    "responses": {
+                        "200": {
+                            "x-links": {
+                                "FooPut": {"operationRef": "#/paths/~1foo/put", "parameters": {"not_common_id": 42}},
+                                "FooPOST": {"operationId": "post-foo", "parameters": {"not_common_id": 42}},
+                            },
+                            "description": "OK",
+                        }
                     }
                 }
-            }
+            },
         },
-    }
-    empty_open_api_2_schema["definitions"] = {"SimpleIntRef": {"type": "integer"}}
-    empty_open_api_2_schema["parameters"] = {
-        "Param": {"in": "query", "name": "key", "required": True, "type": "integer"}
-    }
-    schema = schemathesis.from_dict(empty_open_api_2_schema)
+        definitions={"SimpleIntRef": {"type": "integer"}},
+        parameters={"Param": {"in": "query", "name": "key", "required": True, "type": "integer"}},
+        basePath="/v1",
+        version="2.0",
+    )
+    schema = schemathesis.openapi.from_dict(schema)
     # Then state machine should be successfully generated
     state_machine = schema.as_state_machine()
-    assert len(state_machine.bundles) == 2
-    # 3 fallbacks for each operation (there are 3 operations) + 2 links
-    assert len(state_machine.rules()) == 5
+    assert len(state_machine.bundles) == 1
+    assert "POST /bar -> 200" in state_machine.bundles
+    # 1 operation that creates data for other operations + 2 links
+    assert len(state_machine.rules()) == 3
 
 
 def test_common_parameters_multiple_tests(testdir):
@@ -136,7 +137,6 @@ def test_common_parameters_multiple_tests(testdir):
         """
 def impl(request, case):
     request.config.HYPOTHESIS_CASES += 1
-    assert case.full_path == "/v1/users"
     assert case.method in ["GET", "POST"]
     assert_int(case.query["common_id"])
 

@@ -1,0 +1,67 @@
+Exit code: 1
+---
+Stdout:
+Schemathesis dev
+━━━━━━━━━━━━━━━━
+
+
+ ✅  Loaded specification from /tmp/schema.json (in N ms)
+
+     Base URL:         http://127.0.0.1/api
+     Specification:    Open API 3.0.2
+     Operations:       2 selected / 2 total
+
+
+ ✅  API capabilities:
+
+     Supports NULL byte in headers:    ✘
+
+ 🚫  Unit tests (in N ms)
+
+     ✅ 1 passed  🚫 1 errors
+
+==================================== ERRORS ====================================
+_____________________________________ /foo _____________________________________
+Schema Error
+
+Unresolvable JSON pointer in the schema
+
+Error details:
+    JSON pointer: '#/components/UnknownMethods'
+    This typically means that the schema is referencing a component that doesn't exist.
+
+Ensure that the definition complies with the OpenAPI specification
+__________________________________ POST /bar ___________________________________
+Schema Error
+
+Unresolvable JSON pointer in the schema
+
+Error details:
+    JSON pointer: '#/components/UnknownParameter'
+    This typically means that the schema is referencing a component that doesn't exist.
+
+Ensure that the definition complies with the OpenAPI specification
+
+Need more help?
+    Join our Discord server: https://discord.gg/R9ASRAmHnA
+=================================== SUMMARY ====================================
+
+API Operations:
+  Selected: 2/2
+  Tested: 1
+  Errored: 1
+
+Test Phases:
+  ✅ API probing
+  🚫 Unit testing
+  ⏭️ Stateful testing (not applicable)
+
+Errors:
+  🚫 Schema Error: 2
+
+Test cases:
+  N generated, N passed
+
+Seed: 42
+
+============================== 2 errors in 1.00s ===============================

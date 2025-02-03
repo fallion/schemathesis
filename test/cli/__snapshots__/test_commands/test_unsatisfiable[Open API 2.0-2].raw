@@ -1,0 +1,57 @@
+Exit code: 1
+---
+Stdout:
+Schemathesis dev
+━━━━━━━━━━━━━━━━
+
+
+ ✅  Loaded specification from http://127.0.0.1/schema.yaml (in N ms)
+
+     Base URL:         http://127.0.0.1/api
+     Specification:    Open API 2.0
+     Operations:       1 selected / 1 total
+
+
+ ✅  API capabilities:
+
+     Supports NULL byte in headers:    ✘
+
+ 🚫  Unit tests (in N ms)
+
+     🚫 1 errors
+
+==================================== ERRORS ====================================
+_____________________________ POST /unsatisfiable ______________________________
+Schema Error
+
+Failed to generate test cases for this API operation. Possible reasons:
+
+    - Contradictory schema constraints, such as a minimum value exceeding the maximum.
+    - Invalid schema definitions for headers or cookies, for example allowing for non-ASCII characters.
+    - Excessive schema complexity, which hinders parameter generation.
+
+Tip: Examine the schema for inconsistencies and consider simplifying it.
+
+Need more help?
+    Join our Discord server: https://discord.gg/R9ASRAmHnA
+=================================== SUMMARY ====================================
+
+API Operations:
+  Selected: 1/1
+  Tested: 0
+  Errored: 1
+
+Test Phases:
+  ✅ API probing
+  🚫 Unit testing
+  ⏭️ Stateful testing (not applicable)
+
+Errors:
+  🚫 Schema Error: 1
+
+Test cases:
+  No test cases were generated
+
+Seed: 42
+
+=============================== 1 error in 1.00s ===============================

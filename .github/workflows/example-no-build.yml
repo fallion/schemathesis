@@ -1,0 +1,18 @@
+name: Public API report example
+
+on:
+  workflow_dispatch:
+
+jobs:
+  api-tests:
+    runs-on: ubuntu-22.04
+
+    steps:
+      # Runs positive Schemathesis tests
+      - uses: schemathesis/action@v1
+        with:
+          # A publicly available API schema location
+          schema: "https://example.schemathesis.io/openapi.json"
+          # Set your token from secrets
+          token: ${{ secrets.SCHEMATHESIS_TOKEN }}
+          args: "-E success"

@@ -1,24 +1,28 @@
-import cgi
 import csv
 import json
+import logging
 from time import sleep
 from typing import Tuple
 from uuid import uuid4
 
 import jsonschema
 import yaml
-from flask import Flask, Response, _request_ctx_stack, jsonify, request
+from flask import Flask, Response, jsonify, request
 from werkzeug.exceptions import BadRequest, GatewayTimeout, InternalServerError
 
+from schemathesis.core import media_types
+
 from ..schema import PAYLOAD_VALIDATOR, OpenAPIVersion, make_openapi_schema
+
+logging.getLogger("werkzeug").setLevel(logging.CRITICAL)
 
 SUCCESS_RESPONSE = {"read": "success!"}
 
 
 def expect_content_type(value: str):
     content_type = request.headers["Content-Type"]
-    content_type, _ = cgi.parse_header(content_type)
-    if content_type != value:
+    main, sub = media_types.parse(content_type)
+    if f"{main}/{sub}" != value:
         raise InternalServerError(f"Expected {value} payload")
 
 
@@ -31,11 +35,12 @@ def create_app(
     app.config["incoming_requests"] = []
     app.config["schema_requests"] = []
     app.config["internal_exception"] = False
+    app.config["random_delay"] = False
     app.config["users"] = {}
 
     @app.before_request
     def store_request():
-        current_request = _request_ctx_stack.top.request
+        current_request = request._get_current_object()
         if request.path == "/schema.yaml":
             app.config["schema_requests"].append(current_request)
         else:
@@ -50,7 +55,7 @@ def create_app(
     @app.route("/api/success", methods=["GET"])
     def success():
         if app.config["internal_exception"]:
-            1 / 0
+            raise ZeroDivisionError("division by zero")
         return jsonify({"success": True})
 
     @app.route("/api/foo:bar", methods=["GET"])
@@ -126,6 +131,9 @@ def create_app(
 
     @app.route("/api/path_variable/<key>", methods=["GET"])
     def path_variable(key):
+        if app.config["random_delay"]:
+            sleep(app.config["random_delay"])
+            app.config["random_delay"] = False
         return jsonify({"success": True})
 
     @app.route("/api/unsatisfiable", methods=["POST"])
@@ -229,6 +237,10 @@ def create_app(
         if not request.args["id"].isdigit():
             return jsonify({"detail": "Invalid `id`"}), 400
         return jsonify({"value": request.args["id"]})
+
+    @app.route("/api/ignored_auth", methods=["GET"])
+    def ignored_auth():
+        return jsonify({"has_auth": "Authorization" in request.headers})
 
     @app.route("/api/invalid_path_parameter/<id>", methods=["GET"])
     def invalid_path_parameter(id):

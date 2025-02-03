@@ -4,17 +4,27 @@ Public API reference
 Checks
 ~~~~~~
 
-.. autofunction:: schemathesis.register_check
+.. autofunction:: schemathesis.check
 
-Fixups
-~~~~~~
+Data Generation
+~~~~~~~~~~~~~~~
 
-**Available fixups**:
+.. autoclass:: schemathesis.GenerationConfig
+   :members:
 
-- fast_api
 
-.. autofunction:: schemathesis.fixups.install
-.. autofunction:: schemathesis.fixups.uninstall
+Authentication
+~~~~~~~~~~~~~~
+
+.. automodule:: schemathesis.auths
+
+.. autofunction:: schemathesis.auth
+
+.. autoclass:: schemathesis.auths.AuthProvider
+   :members:
+
+.. autoclass:: schemathesis.auths.AuthContext
+   :members:
 
 Hooks
 ~~~~~
@@ -24,7 +34,7 @@ Hooks
 
 These functions affect Schemathesis behavior globally:
 
-.. autofunction:: schemathesis.hooks.register
+.. autofunction:: schemathesis.hook
 .. autofunction:: schemathesis.hooks.unregister
 .. autofunction:: schemathesis.hooks.unregister_all
 
@@ -57,7 +67,7 @@ Serializers
 
 .. autoclass:: schemathesis.serializers.SerializerContext
    :members:
-.. autofunction:: schemathesis.serializers.register
+.. autofunction:: schemathesis.serializer
 .. autofunction:: schemathesis.serializers.unregister
 
 Targeted testing
@@ -65,27 +75,49 @@ Targeted testing
 
 .. autoclass:: schemathesis.targets.TargetContext
    :members:
-.. autofunction:: schemathesis.register_target
+.. autofunction:: schemathesis.target
 
 Custom strategies for Open API "format" keyword
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-.. autofunction:: schemathesis.register_string_format
+.. autofunction:: schemathesis.openapi.format
+
+Custom strategies for Open API media types
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. autofunction:: schemathesis.openapi.media_type
+
+Custom scalars for GraphQL
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. autofunction:: schemathesis.graphql.scalar
 
 Loaders
 ~~~~~~~
 
-.. autofunction:: schemathesis.from_aiohttp
-.. autofunction:: schemathesis.from_asgi
-.. autofunction:: schemathesis.from_dict
-.. autofunction:: schemathesis.from_file
-.. autofunction:: schemathesis.from_path
-.. autofunction:: schemathesis.from_pytest_fixture
-.. autofunction:: schemathesis.from_uri
-.. autofunction:: schemathesis.from_wsgi
+.. autofunction:: schemathesis.openapi.from_asgi
+.. autofunction:: schemathesis.openapi.from_dict
+.. autofunction:: schemathesis.openapi.from_file
+.. autofunction:: schemathesis.openapi.from_path
+.. autofunction:: schemathesis.openapi.from_url
+.. autofunction:: schemathesis.openapi.from_wsgi
+.. autofunction:: schemathesis.graphql.from_path
 .. autofunction:: schemathesis.graphql.from_dict
+.. autofunction:: schemathesis.graphql.from_file
 .. autofunction:: schemathesis.graphql.from_url
+.. autofunction:: schemathesis.graphql.from_asgi
 .. autofunction:: schemathesis.graphql.from_wsgi
+.. autofunction:: schemathesis.pytest.from_fixture
+
+Sanitizing Output
+~~~~~~~~~~~~~~~~~
+
+.. autoclass:: schemathesis.sanitization.Config()
+
+  .. automethod:: with_keys_to_sanitize
+  .. automethod:: without_keys_to_sanitize
+  .. automethod:: with_sensitive_markers
+  .. automethod:: without_sensitive_markers
 
 Schema
 ~~~~~~

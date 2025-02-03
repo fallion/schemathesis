@@ -1,52 +1,53 @@
 """Lexical analysis of runtime expressions."""
+
+from dataclasses import dataclass
 from enum import Enum, unique
 from typing import Callable, Generator
 
-import attr
 
-
-@unique  # pragma: no mutate
+@unique
 class TokenType(Enum):
-    VARIABLE = 1  # pragma: no mutate
-    STRING = 2  # pragma: no mutate
-    POINTER = 3  # pragma: no mutate
-    DOT = 4  # pragma: no mutate
-    LBRACKET = 5  # pragma: no mutate
-    RBRACKET = 6  # pragma: no mutate
+    VARIABLE = 1
+    STRING = 2
+    POINTER = 3
+    DOT = 4
+    LBRACKET = 5
+    RBRACKET = 6
 
 
-@attr.s(slots=True)  # pragma: no mutate
+@dataclass
 class Token:
     """Lexical token that may occur in a runtime expression."""
 
-    value: str = attr.ib()  # pragma: no mutate
-    type_: TokenType = attr.ib()  # pragma: no mutate
+    value: str
+    end: int
+    type_: TokenType
 
     # Helpers for cleaner instantiation
 
     @classmethod
-    def variable(cls, value: str) -> "Token":
-        return cls(value, TokenType.VARIABLE)
+    def variable(cls, value: str, end: int) -> "Token":
+        return cls(value, end, TokenType.VARIABLE)
 
     @classmethod
-    def string(cls, value: str) -> "Token":
-        return cls(value, TokenType.STRING)
+    def string(cls, value: str, end: int) -> "Token":
+        return cls(value, end, TokenType.STRING)
 
     @classmethod
-    def pointer(cls, value: str) -> "Token":
-        return cls(value, TokenType.POINTER)
+    def pointer(cls, value: str, end: int) -> "Token":
+        return cls(value, end, TokenType.POINTER)
 
     @classmethod
-    def lbracket(cls) -> "Token":
-        return cls("{", TokenType.LBRACKET)
+    def lbracket(cls, end: int) -> "Token":
+        return cls("{", end, TokenType.LBRACKET)
 
     @classmethod
-    def rbracket(cls) -> "Token":
-        return cls("}", TokenType.RBRACKET)
+    def rbracket(cls, end: int) -> "Token":
+        return cls("}", end, TokenType.RBRACKET)
 
     @classmethod
-    def dot(cls) -> "Token":
-        return cls(".", TokenType.DOT)
+    def dot(cls, end: int) -> "Token":
+        return cls(".", end, TokenType.DOT)
 
     # Helpers for simpler type comparison
 
@@ -103,15 +104,15 @@ def tokenize(expression: str) -> TokenGenerator:
         if current_symbol() == "$":
             start = cursor
             move_until(lambda: is_eol() or current_symbol() in stop_symbols)
-            yield Token.variable(expression[start:cursor])
+            yield Token.variable(expression[start:cursor], cursor - 1)
         elif current_symbol() == ".":
-            yield Token.dot()
+            yield Token.dot(cursor)
             move()
         elif current_symbol() == "{":
-            yield Token.lbracket()
+            yield Token.lbracket(cursor)
             move()
         elif current_symbol() == "}":
-            yield Token.rbracket()
+            yield Token.rbracket(cursor)
             move()
         elif current_symbol() == "#":
             start = cursor
@@ -126,8 +127,8 @@ def tokenize(expression: str) -> TokenGenerator:
             # `ID_{$response.body#/foo}_{$response.body#/bar}`
             # Which is much easier if we treat `}` as a closing bracket of an embedded runtime expression
             move_until(lambda: is_eol() or current_symbol() == "}")
-            yield Token.pointer(expression[start:cursor])
+            yield Token.pointer(expression[start:cursor], cursor - 1)
         else:
             start = cursor
             move_until(lambda: is_eol() or current_symbol() in stop_symbols)
-            yield Token.string(expression[start:cursor])
+            yield Token.string(expression[start:cursor], cursor - 1)

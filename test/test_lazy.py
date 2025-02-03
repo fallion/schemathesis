@@ -1,19 +1,15 @@
 import pytest
 
-from schemathesis import DataGenerationMethod
-from schemathesis.constants import IS_PYTEST_ABOVE_54
-
 
 def test_default(testdir):
     # When LazySchema is used
     testdir.make_test(
         """
-lazy_schema = schemathesis.from_pytest_fixture("simple_schema")
+lazy_schema = schemathesis.pytest.from_fixture("simple_schema")
 
 @lazy_schema.parametrize()
 def test_(case):
-    assert case.full_path == "/v1/users"
-    assert case.method == "GET"
+    pass
 """
     )
     result = testdir.runpytest("-v")
@@ -26,18 +22,17 @@ def test_with_settings(testdir):
     # When hypothesis settings are applied to the test function
     testdir.make_test(
         """
-lazy_schema = schemathesis.from_pytest_fixture("simple_schema")
+lazy_schema = schemathesis.pytest.from_fixture("simple_schema")
 
 @settings(phases=[])
 @lazy_schema.parametrize()
 def test_(request, case):
     request.config.HYPOTHESIS_CASES += 1
-
 """
     )
     result = testdir.runpytest("-v", "-s")
     # Then settings should be applied to the test
-    result.assert_outcomes(passed=1)
+    result.assert_outcomes(passed=1, skipped=1)
     result.stdout.re_match_lines([r"test_with_settings.py::test_ PASSED", r".*1 passed"])
     result.stdout.re_match_lines([r"Hypothesis calls: 0$"])
 
@@ -47,7 +42,7 @@ def test_invalid_operation(testdir, hypothesis_max_examples):
     # And schema validation is disabled
     testdir.make_test(
         """
-lazy_schema = schemathesis.from_pytest_fixture("simple_schema")
+lazy_schema = schemathesis.pytest.from_fixture("simple_schema")
 
 @lazy_schema.parametrize()
 def test_(request, case):
@@ -67,17 +62,16 @@ def test_(request, case):
                 }
             },
         },
-        validate_schema=False,
     )
     result = testdir.runpytest("-v", "-rf")
     # Then one test should be marked as failed (passed - /users, failed /)
     result.assert_outcomes(passed=1, failed=1)
     result.stdout.re_match_lines(
         [
-            r"test_invalid_operation.py::test_[GET /v1/valid][P] PASSED                [ 25%]",
-            r"test_invalid_operation.py::test_[GET /v1/invalid][P] FAILED              [ 50%]",
-            r"test_invalid_operation.py::test_[GET /v1/users][P] PASSED                [ 75%]",
-            r".*1 passed",
+            r"test_invalid_operation.py::test_\[GET /valid\] \(label='GET /valid'\) SUBPASS +\[ 25%\]",
+            r"test_invalid_operation.py::test_\[GET /invalid\] \(label='GET /invalid'\) SUBFAIL +\[ 50%\]",
+            r"test_invalid_operation.py::test_\[GET /users\] \(label='GET /users'\) SUBPASS +\[ 75%\]",
+            r"test_invalid_operation.py::test_ PASSED +\[100%\]",
         ]
     )
     # 100 for /valid, 1 for /users
@@ -89,7 +83,7 @@ def test_with_fixtures(testdir):
     # When the test uses custom arguments for pytest fixtures
     testdir.make_test(
         """
-lazy_schema = schemathesis.from_pytest_fixture("simple_schema")
+lazy_schema = schemathesis.pytest.from_fixture("simple_schema")
 
 @pytest.fixture
 def another():
@@ -98,8 +92,6 @@ def another():
 @lazy_schema.parametrize()
 def test_(request, case, another):
     request.config.HYPOTHESIS_CASES += 1
-    assert case.full_path == "/v1/users"
-    assert case.method == "GET"
     assert another == 1
 """
     )
@@ -114,28 +106,28 @@ def test_with_parametrize_filters(testdir):
     # When the test uses method / endpoint / tag / operation-id filter
     testdir.make_test(
         """
-lazy_schema = schemathesis.from_pytest_fixture("simple_schema")
+lazy_schema = schemathesis.pytest.from_fixture("simple_schema")
 
-@lazy_schema.parametrize(endpoint="/first")
+@lazy_schema.include(path_regex="/first").parametrize()
 def test_a(request, case):
     request.config.HYPOTHESIS_CASES += 1
-    assert case.full_path == "/v1/first"
+    assert case.operation.path == "/first"
 
-@lazy_schema.parametrize(method="POST")
+@lazy_schema.include(method="POST").parametrize()
 def test_b(request, case):
     request.config.HYPOTHESIS_CASES += 1
     assert case.method == "POST"
 
-@lazy_schema.parametrize(tag="foo")
+@lazy_schema.include(tag="foo").parametrize()
 def test_c(request, case):
     request.config.HYPOTHESIS_CASES += 1
-    assert case.full_path == "/v1/second"
+    assert case.operation.path == "/second"
     assert case.method == "GET"
 
-@lazy_schema.parametrize(operation_id="updateThird")
+@lazy_schema.include(operation_id="updateThird").parametrize()
 def test_d(request, case):
     request.config.HYPOTHESIS_CASES += 1
-    assert case.full_path == "/v1/third"
+    assert case.operation.path == "/third"
     assert case.method == "PUT"
 """,
         paths={
@@ -166,71 +158,16 @@ def test_d(request, case):
     result.stdout.re_match_lines([r"Hypothesis calls: 6$"])
 
 
-def test_with_parametrize_filters_override(testdir):
-    # When the test uses method / endpoint filter
-    testdir.make_test(
-        """
-lazy_schema = schemathesis.from_pytest_fixture("simple_schema")
-
-@lazy_schema.parametrize(endpoint=None, method="GET")
-def test_a(request, case):
-    request.config.HYPOTHESIS_CASES += 1
-    assert case.method == "GET"
-
-@lazy_schema.parametrize(endpoint="/second", method=None)
-def test_b(request, case):
-    request.config.HYPOTHESIS_CASES += 1
-    assert case.full_path == "/v1/second"
-
-@lazy_schema.parametrize()
-def test_c(request, case):
-    request.config.HYPOTHESIS_CASES += 1
-""",
-        paths={
-            "/first": {
-                "post": {"tags": ["foo"], "responses": {"200": {"description": "OK"}}},
-                "get": {"tags": ["foo"], "responses": {"200": {"description": "OK"}}},
-            },
-            "/second": {
-                "post": {"tags": ["foo"], "responses": {"200": {"description": "OK"}}},
-                "get": {"tags": ["foo"], "responses": {"200": {"description": "OK"}}},
-            },
-            "/third": {
-                "post": {"tags": ["bar"], "responses": {"200": {"description": "OK"}}},
-                "get": {"tags": ["bar"], "responses": {"200": {"description": "OK"}}},
-            },
-        },
-        method="POST",
-        endpoint="/first",
-        tag="foo",
-    )
-    result = testdir.runpytest("-v", "-s")
-    # Then the filters should be applied to the generated tests
-    result.assert_outcomes(passed=3)
-    result.stdout.re_match_lines(
-        [
-            r"test_with_parametrize_filters_override.py::test_a PASSED",
-            r"test_with_parametrize_filters_override.py::test_b PASSED",
-            r"test_with_parametrize_filters_override.py::test_c PASSED",
-            r".*3 passed",
-        ]
-    )
-    # test_a: 2 = 2 GET to /first, /second
-    # test_b: 2 = 1 GET + 1 POST to /second
-    # test_c: 1 = 1 POST to /first
-    result.stdout.re_match_lines([r"Hypothesis calls: 5$"])
-
-
 def test_with_schema_filters(testdir):
     # When the test uses method / endpoint filter
     testdir.make_test(
         """
-lazy_schema = schemathesis.from_pytest_fixture("simple_schema", endpoint="/v1/pets", method="POST")
+lazy_schema = schemathesis.pytest.from_fixture("simple_schema").include(path_regex="/pets", method="POST")
 
 @lazy_schema.parametrize()
 def test_a(request, case):
     request.config.HYPOTHESIS_CASES += 1
-    assert case.full_path == "/v1/pets"
+    assert case.operation.path == "/pets"
     assert case.method == "POST"
 """,
         paths={"/pets": {"post": {"responses": {"200": {"description": "OK"}}}}},
@@ -242,109 +179,6 @@ def test_a(request, case):
     result.stdout.re_match_lines([r"Hypothesis calls: 1$"])
 
 
-def test_with_schema_filters_override(testdir):
-    # When the test uses method / endpoint filter
-    testdir.make_test(
-        """
-lazy_schema = schemathesis.from_pytest_fixture("simple_schema", endpoint=None, method="POST")
-
-@lazy_schema.parametrize()
-def test_a(request, case):
-    request.config.HYPOTHESIS_CASES += 1
-    assert case.method == "POST"
-
-lazy_schema = schemathesis.from_pytest_fixture("simple_schema", endpoint=None, method="POST")
-@lazy_schema.parametrize(endpoint="/second", method=None)
-def test_b(request, case):
-    request.config.HYPOTHESIS_CASES += 1
-    assert case.full_path == "/v1/second"
-""",
-        paths={
-            "/first": {
-                "post": {"responses": {"200": {"description": "OK"}}},
-                "get": {"responses": {"200": {"description": "OK"}}},
-            },
-            "/second": {
-                "post": {"responses": {"200": {"description": "OK"}}},
-                "get": {"responses": {"200": {"description": "OK"}}},
-            },
-        },
-        method="GET",
-        endpoint="/first",
-    )
-    result = testdir.runpytest("-v", "-s")
-    # Then the filters should be applied to the generated tests
-    result.assert_outcomes(passed=2)
-    result.stdout.re_match_lines(
-        [
-            r"test_with_schema_filters_override.py::test_a PASSED",
-            r"test_with_schema_filters_override.py::test_b PASSED",
-            r".*2 passed",
-        ]
-    )
-    # test_a: 2 = 1 POST to /first + 1 POST to /second
-    # test_b: 2 = 1 GET to /second + 1 POST to /second
-    result.stdout.re_match_lines([r"Hypothesis calls: 4$"])
-
-
-def test_schema_filters_with_parametrize_override(testdir):
-    # When the test uses method / endpoint filter
-    testdir.make_test(
-        """
-lazy_schema = schemathesis.from_pytest_fixture("simple_schema", endpoint="/v1/first", method="POST")
-
-@lazy_schema.parametrize(endpoint="/second", method="GET")
-def test_a(request, case):
-    request.config.HYPOTHESIS_CASES += 1
-    assert case.full_path == "/v1/second"
-    assert case.method == "GET"
-
-@lazy_schema.parametrize(endpoint=None, method="GET")
-def test_b(request, case):
-    request.config.HYPOTHESIS_CASES += 1
-    assert case.method == "GET"
-
-@lazy_schema.parametrize(endpoint="/second", method=None)
-def test_c(request, case):
-    request.config.HYPOTHESIS_CASES += 1
-    assert case.full_path == "/v1/second"
-
-@lazy_schema.parametrize()
-def test_d(request, case):
-    request.config.HYPOTHESIS_CASES += 1
-    assert case.full_path == "/v1/first"
-    assert case.method == "POST"
-""",
-        paths={
-            "/first": {
-                "post": {"responses": {"200": {"description": "OK"}}},
-                "get": {"responses": {"200": {"description": "OK"}}},
-            },
-            "/second": {
-                "post": {"responses": {"200": {"description": "OK"}}},
-                "get": {"responses": {"200": {"description": "OK"}}},
-            },
-        },
-    )
-    result = testdir.runpytest("-v")
-    # Then the filters should be applied to the generated tests
-    result.assert_outcomes(passed=4)
-    result.stdout.re_match_lines(
-        [
-            r"test_schema_filters_with_parametrize_override.py::test_a PASSED",
-            r"test_schema_filters_with_parametrize_override.py::test_b PASSED",
-            r"test_schema_filters_with_parametrize_override.py::test_c PASSED",
-            r"test_schema_filters_with_parametrize_override.py::test_d PASSED",
-            r".*4 passed",
-        ]
-    )
-    # test_a: 1 = 1 GET to /first
-    # test_b: 3 = 3 GET to /users, /first, /second
-    # test_c: 2 = 1 GET + 1 POST to /second
-    # test_d: 1 = 1 POST to /first
-    result.stdout.re_match_lines([r"Hypothesis calls: 7$"])
-
-
 def test_invalid_fixture(testdir):
     # When the test uses a schema fixture that doesn't return a BaseSchema subtype
     testdir.make_test(
@@ -353,7 +187,7 @@ def test_invalid_fixture(testdir):
 def bad_schema():
     return 1
 
-lazy_schema = schemathesis.from_pytest_fixture("bad_schema")
+lazy_schema = schemathesis.pytest.from_fixture("bad_schema")
 
 @lazy_schema.parametrize()
 def test_(request, case):
@@ -372,61 +206,7 @@ def test_(request, case):
     )
 
 
-def test_get_request_with_body(testdir, schema_with_get_payload):
-    testdir.make_test(
-        """
-lazy_schema = schemathesis.from_pytest_fixture("simple_schema")
-
-@lazy_schema.parametrize()
-def test_(request, case):
-    request.config.HYPOTHESIS_CASES += 1
-""",
-        schema=schema_with_get_payload,
-    )
-    result = testdir.runpytest("-v")
-    result.assert_outcomes(passed=1, failed=1)
-    result.stdout.re_match_lines([r"E +InvalidSchema: Body parameters are defined for GET request."])
-
-
-@pytest.mark.parametrize(
-    "decorators",
-    (
-        """@lazy_schema.hooks.apply(before_generate_headers)
-@lazy_schema.parametrize()""",
-        """@lazy_schema.parametrize()
-@lazy_schema.hooks.apply(before_generate_headers)""",
-    ),
-)
-def test_hooks_with_lazy_schema(testdir, simple_openapi, decorators):
-    testdir.make_test(
-        f"""
-lazy_schema = schemathesis.from_pytest_fixture("simple_schema")
-
-@lazy_schema.hooks.register
-def before_generate_query(context, strategy):
-    return strategy.filter(lambda x: x["id"].isdigit())
-
-def before_generate_headers(context, strategy):
-    def convert(x):
-        x["value"] = "cool"
-        return x
-    return strategy.map(convert)
-
-{decorators}
-@settings(max_examples=5)
-def test_(request, case):
-    request.config.HYPOTHESIS_CASES += 1
-    assert case.query["id"].isdigit()
-    assert case.headers["value"] == "cool"
-""",
-        schema=simple_openapi,
-    )
-    result = testdir.runpytest()
-    result.assert_outcomes(passed=1)
-    result.stdout.re_match_lines(["Hypothesis calls: 5"])
-
-
-@pytest.mark.parametrize("given", ("data=st.data()", "st.data()"))
+@pytest.mark.parametrize("given", ["data=st.data()", "st.data()"])
 def test_schema_given(testdir, given):
     # When the schema is defined via a pytest fixture
     # And `schema.given` is used
@@ -434,7 +214,7 @@ def test_schema_given(testdir, given):
         f"""
 from hypothesis.strategies._internal.core import DataObject
 
-lazy_schema = schemathesis.from_pytest_fixture("simple_schema")
+lazy_schema = schemathesis.pytest.from_fixture("simple_schema")
 OPERATIONS = []
 
 @lazy_schema.parametrize()
@@ -464,7 +244,7 @@ def test_invalid_given_usage(testdir):
     # When `schema.given` is used incorrectly (e.g. called without arguments)
     testdir.make_test(
         """
-lazy_schema = schemathesis.from_pytest_fixture("simple_schema")
+lazy_schema = schemathesis.pytest.from_fixture("simple_schema")
 
 @lazy_schema.parametrize()
 @lazy_schema.given()
@@ -478,33 +258,8 @@ def test(case):
     result.stdout.re_match_lines([".+given must be called with at least one argument"])
 
 
-def test_override_base_url(testdir):
-    # When `base_url` is passed to `from_pytest_fixture`
-    testdir.make_test(
-        """
-schema.base_url = "http://127.0.0.1/a1"
-lazy_schema = schemathesis.from_pytest_fixture("simple_schema", base_url="http://127.0.0.1/a2")
-
-@lazy_schema.parametrize()
-def test_a(case):
-    assert schema.base_url == "http://127.0.0.1/a1"
-    assert case.operation.schema.base_url == "http://127.0.0.1/a2"
-
-lazy_schema2 = schemathesis.from_pytest_fixture("simple_schema")
-
-@lazy_schema2.parametrize()
-def test_b(case):
-    # No override
-    assert schema.base_url == case.operation.schema.base_url == "http://127.0.0.1/a1"
-        """,
-    )
-    # Then it should be overridden in the resulting schema
-    # And the original one should remain the same
-    result = testdir.runpytest()
-    result.assert_outcomes(passed=2)
-
-
-def test_parametrized_fixture(testdir, openapi3_base_url):
+@pytest.mark.parametrize("settings", ["", "@settings(deadline=None)"])
+def test_parametrized_fixture(testdir, openapi3_base_url, settings):
     # When the used pytest fixture is parametrized via `params`
     testdir.make_test(
         f"""
@@ -514,9 +269,10 @@ schema.base_url = "{openapi3_base_url}"
 def parametrized_lazy_schema(request):
     return schema
 
-lazy_schema = schemathesis.from_pytest_fixture("parametrized_lazy_schema")
+lazy_schema = schemathesis.pytest.from_fixture("parametrized_lazy_schema")
 
 @lazy_schema.parametrize()
+{settings}
 def test_(case):
     case.call()
 """,
@@ -526,27 +282,37 @@ def test_(case):
     result.assert_outcomes(passed=2)
     result.stdout.re_match_lines(
         [
-            r"test_parametrized_fixture.py::test_\[a\]\[GET /api/users\]\[P\] PASSED",
-            r"test_parametrized_fixture.py::test_\[b\]\[GET /api/users\]\[P\] PASSED",
+            r"test_parametrized_fixture.py::test_\[a\]\[GET /users\] \(label='GET /users'\) SUBPASS +\[ 33%\]",
+            r"test_parametrized_fixture.py::test_\[b\]\[GET /users\] \(label='GET /users'\) SUBPASS +\[ 75%\]",
         ]
     )
 
 
-def test_data_generation_methods(testdir):
+def test_generation_modes(testdir):
     # When data generation method config is specified on the schema which is wrapped by a lazy one
     testdir.make_test(
-        f"""
+        """
 @pytest.fixture()
 def api_schema():
-    return schemathesis.from_dict(raw_schema, data_generation_methods=schemathesis.DataGenerationMethod.all())
+    return schemathesis.openapi.from_dict(raw_schema).configure(
+        generation=GenerationConfig(modes=schemathesis.GenerationMode.all())
+    )
 
-lazy_schema = schemathesis.from_pytest_fixture("api_schema")
+lazy_schema = schemathesis.pytest.from_fixture("api_schema")
 
 @lazy_schema.parametrize()
 @settings(max_examples=1)
 def test_(case):
     pass
 """,
+        paths={
+            "/users": {
+                "get": {
+                    "parameters": [{"in": "query", "name": "key", "required": True, "type": "integer"}],
+                    "responses": {"200": {"description": "OK"}},
+                },
+            }
+        },
     )
     testdir.makepyfile(
         conftest="""
@@ -565,103 +331,15 @@ def pytest_terminal_summary(terminalreporter) -> None:
         for report in reports
     }
     # SubTest reports should contain unique kwargs
-    assert len(unique) == len(reports) == 2
+    assert len(unique) == len(reports) == 1
     yield
 """
     )
     # Then it should be taken into account
     result = testdir.runpytest("-v")
-    result.assert_outcomes(passed=1)  # It is still a single test on the top level
-    # And each data generation method should have its own test
-    result.stdout.re_match_lines(
-        [
-            r"test_data_generation_methods.py::test_\[GET /v1/users\]\[P\] PASSED",
-            r"test_data_generation_methods.py::test_\[GET /v1/users\]\[N\] PASSED",
-        ]
-    )
-
-
-def test_data_generation_methods_override(testdir):
-    # When data generation method config is specified on the schema which is wrapped by a lazy one
-    # And then overridden on the` from_pytest_fixture` level
-    testdir.make_test(
-        f"""
-@pytest.fixture()
-def api_schema():
-    return schemathesis.from_dict(raw_schema, data_generation_methods=schemathesis.DataGenerationMethod.all())
-
-lazy_schema = schemathesis.from_pytest_fixture(
-    "api_schema",
-    data_generation_methods=schemathesis.DataGenerationMethod.positive
-)
-
-@lazy_schema.parametrize()
-@settings(max_examples=1)
-def test_(case):
-    pass
-""",
-    )
-    # Then the overridden one should be used
-    result = testdir.runpytest("-v")
-    result.assert_outcomes(passed=1)
-    result.stdout.re_match_lines(
-        [
-            r"test_data_generation_methods_override.py::test_\[GET /v1/users\]\[P\] PASSED *\[ 50%\]",
-        ]
-    )
-
-
-def test_hooks_are_merged(testdir):
-    # When the wrapped schema has hooks
-    # And the lazy schema also has hooks
-    testdir.make_test(
-        """
-COUNTER = 1
-
-def before_generate_case_first(ctx, strategy):
-
-    def change(case):
-        global COUNTER
-        if case.headers is None:
-            case.headers = {}
-        case.headers["one"] = COUNTER
-        COUNTER += 1
-        return case
-
-    return strategy.map(change)
-
-@pytest.fixture()
-def api_schema():
-    loaded = schemathesis.from_dict(raw_schema)
-    loaded.hooks.register("before_generate_case")(before_generate_case_first)
-    return loaded
-
-
-lazy_schema = schemathesis.from_pytest_fixture("api_schema")
-
-def before_generate_case_second(ctx, strategy):
-
-    def change(case):
-        global COUNTER
-        if case.headers is None:
-            case.headers = {}
-        case.headers["two"] = COUNTER
-        COUNTER += 1
-        return case
-
-    return strategy.map(change)
-
-lazy_schema.hooks.register("before_generate_case")(before_generate_case_second)
-
-@lazy_schema.parametrize()
-@settings(max_examples=1)
-def test_(case):
-    assert case.headers == {"one": 1, "two": 2}
-    """,
-    )
-    # Then all hooks should be merged
-    result = testdir.runpytest("-v")
-    result.assert_outcomes(passed=1)
+    # And it should be the same test in the end
+    # We do not assert the outcome here, because it is not reported.
+    result.stdout.re_match_lines([r"test_generation_modes.py::test_\[GET /users\] \(label='GET /users'\) SUBPASS"])
 
 
 def test_error_on_no_matches(testdir):
@@ -670,11 +348,11 @@ def test_error_on_no_matches(testdir):
         """
 @pytest.fixture()
 def api_schema():
-    return schemathesis.from_dict(raw_schema)
+    return schemathesis.openapi.from_dict(raw_schema)
 
-lazy_schema = schemathesis.from_pytest_fixture("api_schema")
+lazy_schema = schemathesis.pytest.from_fixture("api_schema")
 
-@lazy_schema.parametrize(operation_id=["does-not-exist"])
+@lazy_schema.include(operation_id=["does-not-exist"]).parametrize()
 @settings(max_examples=1)
 def test_(case):
     pass
@@ -689,3 +367,198 @@ def test_(case):
             r"match any API operations and therefore has no effect"
         ]
     )
+
+
+@pytest.mark.parametrize(
+    "decorators",
+    [
+        """@schema.parametrize()
+@pytest.mark.acceptance""",
+        """@pytest.mark.acceptance
+@schema.parametrize()""",
+    ],
+)
+def test_marks_transfer(testdir, decorators):
+    # See GH-1378
+    # When a pytest mark decorator is applied
+    testdir.make_test(
+        f"""
+@pytest.fixture
+def web_app():
+    1 / 0
+
+schema = schemathesis.pytest.from_fixture("web_app")
+
+{decorators}
+def test_schema(case):
+    1 / 0
+    """
+    )
+    result = testdir.runpytest("-m", "not acceptance")
+    # Then deselecting by a mark should work
+    result.assert_outcomes()
+
+
+def test_skip_negative_without_parameters(testdir):
+    # See GH-1463
+    # When an endpoint has no parameters to negate
+    testdir.make_test(
+        """
+@pytest.fixture()
+def api_schema():
+    return schemathesis.openapi.from_dict(raw_schema).configure(
+        generation=GenerationConfig(modes=[schemathesis.GenerationMode.NEGATIVE])
+    )
+
+lazy_schema = schemathesis.pytest.from_fixture("api_schema")
+
+@lazy_schema.parametrize()
+def test_(case):
+    pass
+""",
+    )
+    # Then it should be skipped
+    result = testdir.runpytest("-v", "-rs")
+    result.stdout.re_match_lines([r".*Impossible to generate negative test cases.*"])
+
+
+def test_trimmed_output(testdir):
+    # When `from_fixture` is used
+    # And tests are failing
+    testdir.make_test(
+        """
+lazy_schema = schemathesis.pytest.from_fixture("simple_schema")
+
+@lazy_schema.parametrize()
+def test_(case):
+    1 / 0""",
+    )
+    result = testdir.runpytest()
+    result.assert_outcomes(passed=1, failed=1)
+    stdout = result.stdout.str()
+    # Internal Schemathesis' frames should not appear in the output
+    assert "def run_subtest" not in stdout
+
+
+@pytest.mark.operations("multiple_failures")
+def test_multiple_failures(testdir, openapi3_schema_url):
+    # When multiple failures are discovered within the same test
+    testdir.make_test(
+        f"""
+@pytest.fixture
+def api_schema():
+    return schemathesis.openapi.from_url('{openapi3_schema_url}')
+
+lazy_schema = schemathesis.pytest.from_fixture("api_schema")
+
+@lazy_schema.parametrize()
+@settings(derandomize=True)
+@seed(1)
+def test_(case):
+    case.call_and_validate()""",
+    )
+    # Then all of them should be displayed
+    result = testdir.runpytest()
+    result.assert_outcomes(passed=1, failed=1)
+    stdout = result.stdout.str()
+    assert "[500] Internal Server Error" in stdout
+    # And internal frames should not be displayed
+    assert "def run_subtest" not in stdout
+
+
+@pytest.mark.operations("flaky")
+def test_flaky(testdir, openapi3_schema_url):
+    # When failure is flaky
+    testdir.make_test(
+        f"""
+@pytest.fixture
+def api_schema():
+    return schemathesis.openapi.from_url('{openapi3_schema_url}')
+
+lazy_schema = schemathesis.pytest.from_fixture("api_schema")
+
+@lazy_schema.parametrize()
+def test_(case):
+    case.call_and_validate()""",
+    )
+    # Then it should be properly displayed
+    result = testdir.runpytest()
+    result.assert_outcomes(passed=1, failed=1)
+    stdout = result.stdout.str()
+    assert "[500] Internal Server Error" in stdout
+    # And internal frames should not be displayed
+    assert "def run_subtest" not in stdout
+    assert "def collecting_wrapper" not in stdout
+    assert "def __flaky" not in stdout
+
+
+@pytest.mark.operations("failure")
+@pytest.mark.parametrize("value", [True, False])
+def test_output_sanitization(testdir, openapi3_schema_url, openapi3_base_url, value):
+    auth = "secret-auth"
+    testdir.make_test(
+        f"""
+@pytest.fixture
+def api_schema():
+    return schemathesis.openapi.from_url('{openapi3_schema_url}').configure(output=OutputConfig(sanitize={value}))
+
+lazy_schema = schemathesis.pytest.from_fixture("api_schema")
+
+@lazy_schema.parametrize()
+def test_(case):
+    case.call_and_validate(headers={{'Authorization': '{auth}'}})""",
+    )
+    result = testdir.runpytest()
+    # We should skip checking for a server error
+    result.assert_outcomes(passed=1, failed=1)
+    if value:
+        expected = rf"curl -X GET -H 'Authorization: [Filtered]' {openapi3_base_url}/failure"
+    else:
+        expected = rf"curl -X GET -H 'Authorization: {auth}' {openapi3_base_url}/failure"
+    assert expected in result.stdout.str()
+
+
+@pytest.mark.operations("success")
+def test_rate_limit(testdir, openapi3_schema_url):
+    testdir.make_test(
+        f"""
+@pytest.fixture
+def api_schema():
+    return schemathesis.openapi.from_url('{openapi3_schema_url}').configure(rate_limit="1/s")
+
+lazy_schema = schemathesis.pytest.from_fixture("api_schema")
+
+@lazy_schema.parametrize()
+def test_(case):
+    limiter = case.operation.schema.rate_limiter
+    assert limiter.bucket_factory.bucket.rates[0].limit == 1
+    assert limiter.bucket_factory.bucket.rates[0].interval == 1000
+""",
+    )
+    result = testdir.runpytest()
+    result.assert_outcomes(passed=1)
+
+
+@pytest.mark.operations("path_variable", "custom_format")
+def test_override(testdir, openapi3_schema_url):
+    testdir.make_test(
+        f"""
+@pytest.fixture
+def api_schema():
+    return schemathesis.openapi.from_url('{openapi3_schema_url}')
+
+lazy_schema = schemathesis.pytest.from_fixture("api_schema")
+
+@lazy_schema.include(path_regex="path_variable|custom_format").parametrize()
+@lazy_schema.override(path_parameters={{"key": "foo"}}, query={{"id": "bar"}})
+def test(case):
+    if "key" in case.operation.path_parameters:
+        assert case.path_parameters["key"] == "foo"
+        assert "id" not in (case.query or {{}}), "`id` is present"
+    if "id" in case.operation.query:
+        assert case.query["id"] == "bar"
+        assert "key" not in (case.path_parameters or {{}}), "`key` is present"
+"""
+    )
+    result = testdir.runpytest()
+    result.assert_outcomes(passed=1)

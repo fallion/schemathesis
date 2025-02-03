@@ -1,15 +1,18 @@
 import base64
-from urllib.parse import parse_qsl, quote_plus, unquote_plus, urlencode, urlparse, urlunparse
+import io
+import json
+import platform
+from unittest.mock import ANY
 
+import harfile
 import pytest
-import requests
 import yaml
 from _pytest.main import ExitCode
-from urllib3._collections import HTTPHeaderDict
+from hypothesis import example, given
+from hypothesis import strategies as st
 
-from schemathesis.cli.cassettes import filter_cassette, get_command_representation, get_prepared_request
-from schemathesis.constants import USER_AGENT
-from schemathesis.models import Request
+from schemathesis.cli.commands.run.handlers.cassettes import _cookie_to_har, write_double_quoted
+from schemathesis.generation import GenerationMode
 
 
 @pytest.fixture
@@ -23,35 +26,79 @@ def load_cassette(path):
 
 
 def load_response_body(cassette, idx):
-    return base64.b64decode(cassette["http_interactions"][idx]["response"]["body"]["base64_string"])
+    body = cassette["http_interactions"][idx]["response"]["body"]
+    if "base64_string" in body:
+        return base64.b64decode(body["base64_string"]).decode()
+    return body["string"]
 
 
+@pytest.mark.parametrize("mode", [m.value for m in GenerationMode.all()] + ["all"])
+@pytest.mark.parametrize("args", [(), ("--report-preserve-bytes",)], ids=("plain", "base64"))
 @pytest.mark.operations("success", "upload_file")
-def test_store_cassette(cli, schema_url, cassette_path, hypothesis_max_examples):
+def test_store_cassette(cli, schema_url, cassette_path, hypothesis_max_examples, args, mode):
     hypothesis_max_examples = hypothesis_max_examples or 2
     result = cli.run(
         schema_url,
-        f"--store-network-log={cassette_path}",
-        f"--hypothesis-max-examples={hypothesis_max_examples}",
-        "--hypothesis-seed=1",
+        f"--report-vcr-path={cassette_path}",
+        f"--max-examples={hypothesis_max_examples}",
+        f"--mode={mode}",
+        "--experimental=coverage-phase",
+        "--seed=1",
+        *args,
     )
     assert result.exit_code == ExitCode.OK, result.stdout
     cassette = load_cassette(cassette_path)
-    assert len(cassette["http_interactions"]) == 1 + hypothesis_max_examples
-    assert cassette["http_interactions"][0]["id"] == "1"
-    assert cassette["http_interactions"][1]["id"] == "2"
-    assert cassette["http_interactions"][0]["status"] == "SUCCESS"
-    assert cassette["http_interactions"][0]["seed"] == "1"
-    assert float(cassette["http_interactions"][0]["elapsed"]) >= 0
-    assert load_response_body(cassette, 0) == b'{"success": true}'
-    assert all("checks" in interaction for interaction in cassette["http_interactions"])
-    assert len(cassette["http_interactions"][0]["checks"]) == 1
-    assert cassette["http_interactions"][0]["checks"][0] == {
+    interactions = cassette["http_interactions"]
+    assert interactions[0]["status"] == "SUCCESS"
+    assert cassette["seed"] == 1
+    if mode == "all":
+        assert interactions[0]["generation"]["mode"] in ["positive", "negative"]
+    else:
+        assert interactions[0]["generation"]["mode"] == mode
+    assert interactions[0]["phase"]["name"] in ("explicit", "coverage", "generate")
+    assert float(interactions[0]["response"]["elapsed"]) >= 0
+    if mode == "positive":
+        assert load_response_body(cassette, 0) == '{"success": true}'
+    assert all("checks" in interaction for interaction in interactions)
+    assert len(interactions[0]["checks"]) == 2
+    assert interactions[0]["checks"][0] == {
         "name": "not_a_server_error",
         "status": "SUCCESS",
         "message": None,
     }
-    assert len(cassette["http_interactions"][1]["checks"]) == 1
+    assert len(interactions[1]["checks"]) == 2
+    for interaction in interactions:
+        if interaction["phase"]["name"] == "coverage":
+            if interaction["generation"]["mode"] == "negative" and not interaction["phase"]["data"][
+                "description"
+            ].startswith("Unspecified"):
+                assert interaction["phase"]["data"]["location"] is not None
+                assert interaction["phase"]["data"]["parameter"] is not None
+                assert interaction["phase"]["data"]["parameter_location"] is not None
+
+
+@pytest.mark.parametrize("format", ["vcr", "har"])
+@pytest.mark.operations("slow")
+@pytest.mark.openapi_version("3.0")
+def test_store_timeout(cli, schema_url, cassette_path, format):
+    result = cli.run(
+        schema_url,
+        f"--report-{format}-path={cassette_path}",
+        "--max-examples=1",
+        "--request-timeout=0.001",
+        "--seed=1",
+    )
+    assert result.exit_code == ExitCode.TESTS_FAILED, result.stdout
+    if format == "vcr":
+        cassette = load_cassette(cassette_path)
+        assert cassette["http_interactions"][0]["status"] == "ERROR"
+        assert cassette["seed"] == 1
+        assert cassette["http_interactions"][0]["response"] is None
+    else:
+        with cassette_path.open(encoding="utf-8") as fd:
+            data = json.load(fd)
+            assert len(data["log"]["entries"]) == 2
+            assert data["log"]["entries"][1]["response"]["bodySize"] == -1
 
 
 @pytest.mark.operations("flaky")
@@ -60,39 +107,33 @@ def test_interaction_status(cli, openapi3_schema_url, hypothesis_max_examples, c
     # When an API operation has responses with SUCCESS and FAILURE statuses
     result = cli.run(
         openapi3_schema_url,
-        f"--store-network-log={cassette_path}",
-        f"--hypothesis-max-examples={hypothesis_max_examples or 5}",
-        "--hypothesis-seed=1",
+        f"--report-vcr-path={cassette_path}",
+        f"--max-examples={hypothesis_max_examples or 5}",
+        "--seed=1",
     )
     assert result.exit_code == ExitCode.TESTS_FAILED, result.stdout
     cassette = load_cassette(cassette_path)
-    # Note. There could be more than 3 calls, depends on Hypothesis internals
-    assert len(cassette["http_interactions"]) >= 3
+    assert len(cassette["http_interactions"]) >= 1
     # Then their statuses should be reflected in the "status" field
     # And it should not be overridden by the overall test status
     assert cassette["http_interactions"][0]["status"] == "FAILURE"
-    assert load_response_body(cassette, 0) == b"500: Internal Server Error"
-    assert cassette["http_interactions"][1]["status"] == "SUCCESS"
-    assert load_response_body(cassette, 1) == b'{"result": "flaky!"}'
-    assert cassette["http_interactions"][2]["status"] == "SUCCESS"
-    assert load_response_body(cassette, 2) == b'{"result": "flaky!"}'
+    assert load_response_body(cassette, 0) == "500: Internal Server Error"
 
 
-def test_encoding_error(testdir, cli, cassette_path, hypothesis_max_examples, openapi3_base_url):
+def test_bad_yaml_headers(ctx, cli, cassette_path, hypothesis_max_examples, openapi3_base_url):
     # See GH-708
     # When the schema expects an input that is not ascii and represented as UTF-8
     # And is not representable in CP1251. E.g. "àààà"
     # And these interactions are recorded to a cassette
     fixed_header = "àààà"
-    raw_schema = {
-        "openapi": "3.0.2",
-        "info": {"title": "Test", "description": "Test", "version": "0.1.0"},
-        "paths": {
+    header_name = "*lh"
+    schema_path = ctx.openapi.write_schema(
+        {
             "/users": {
                 "post": {
                     "parameters": [
                         {
-                            "name": "X-id",
+                            "name": header_name,
                             "in": "header",
                             "required": True,
                             "schema": {"type": "string", "enum": [fixed_header]},
@@ -104,13 +145,13 @@ def test_encoding_error(testdir, cli, cassette_path, hypothesis_max_examples, op
                 }
             }
         },
-    }
-    schema_file = testdir.makefile(".yaml", schema=yaml.dump(raw_schema))
+        format="yaml",
+    )
     result = cli.run(
-        str(schema_file),
-        f"--base-url={openapi3_base_url}",
-        f"--hypothesis-max-examples={hypothesis_max_examples or 1}",
-        f"--store-network-log={cassette_path}",
+        str(schema_path),
+        f"--url={openapi3_base_url}",
+        f"--max-examples={hypothesis_max_examples or 1}",
+        f"--report-vcr-path={cassette_path}",
     )
     # Then the test run should be successful
     assert result.exit_code == ExitCode.OK, result.stdout
@@ -119,159 +160,180 @@ def test_encoding_error(testdir, cli, cassette_path, hypothesis_max_examples, op
     # And the cassette should be correctly recorded
     cassette = load_cassette(cassette_path)
     assert len(cassette["http_interactions"]) == 1
-    assert cassette["http_interactions"][0]["request"]["headers"]["X-id"] == [fixed_header]
+    assert cassette["http_interactions"][0]["request"]["headers"][header_name] == [fixed_header]
 
 
-def test_get_command_representation_unknown():
-    assert get_command_representation() == "<unknown entrypoint>"
-
-
-def test_get_command_representation(mocker):
-    mocker.patch("schemathesis.cli.cassettes.sys.argv", ["schemathesis", "run", "http://example.com/schema.yaml"])
-    assert get_command_representation() == "schemathesis run http://example.com/schema.yaml"
-
-
+@pytest.mark.skipif(platform.system() == "Windows", reason="Simpler to setup on Linux")
 @pytest.mark.operations("success")
-def test_run_subprocess(testdir, cassette_path, hypothesis_max_examples, schema_url):
+def test_run_subprocess(testdir, cassette_path, hypothesis_max_examples, schema_url, snapshot_cli):
     result = testdir.run(
         "schemathesis",
         "run",
-        f"--store-network-log={cassette_path}",
-        f"--hypothesis-max-examples={hypothesis_max_examples or 2}",
+        f"--report-vcr-path={cassette_path}",
+        f"--max-examples={hypothesis_max_examples or 2}",
         schema_url,
     )
-    assert result.ret == ExitCode.OK
-    assert result.outlines[17] == f"Network log: {cassette_path}"
+    assert result == snapshot_cli
     cassette = load_cassette(cassette_path)
     assert len(cassette["http_interactions"]) == 1
-    command = (
-        f"schemathesis run --store-network-log={cassette_path} "
-        f"--hypothesis-max-examples={hypothesis_max_examples or 2} {schema_url}"
-    )
+    command = f"st run --report-vcr-path={cassette_path} --max-examples={hypothesis_max_examples or 2} {schema_url}"
     assert cassette["command"] == command
 
 
-@pytest.mark.operations("invalid")
-def test_main_process_error(cli, schema_url, hypothesis_max_examples, cassette_path):
-    # When there is an error in the main process before the background writer is finished
-    # Here it is happening because the schema is not valid
-    result = cli.run(
-        schema_url,
-        f"--store-network-log={cassette_path}",
-        f"--hypothesis-max-examples={hypothesis_max_examples or 1}",
-        "--hypothesis-seed=1",
-    )
-    assert result.exit_code == ExitCode.TESTS_FAILED, result.stdout
-    # Then there should be no hanging threads
-    # And no cassette
-    cassette = load_cassette(cassette_path)
-    assert cassette is None
-
-
 @pytest.mark.operations("__all__")
-async def test_replay(openapi_version, cli, schema_url, app, reset_app, cassette_path, hypothesis_max_examples):
-    # Record a cassette
+@pytest.mark.parametrize("value", ["true", "false"])
+@pytest.mark.parametrize("args", [(), ("--report-preserve-bytes",)], ids=("plain", "base64"))
+def test_har_format(cli, schema_url, cassette_path, hypothesis_max_examples, args, value):
+    cassette_path = cassette_path.with_suffix(".har")
+    auth = "secret"
     result = cli.run(
         schema_url,
-        f"--store-network-log={cassette_path}",
-        f"--hypothesis-max-examples={hypothesis_max_examples or 1}",
-        "--hypothesis-seed=1",
-        "--validate-schema=false",
+        f"--report-har-path={cassette_path}",
+        f"--max-examples={hypothesis_max_examples or 1}",
+        "--seed=1",
         "--checks=all",
+        f"-H Authorization: {auth}",
+        f"--output-sanitize={value}",
+        *args,
     )
     assert result.exit_code == ExitCode.TESTS_FAILED, result.stdout
-    # these requests are not needed
-    reset_app(openapi_version)
-    assert not app["incoming_requests"]
-    # When a valid cassette is replayed
-    result = cli.replay(str(cassette_path))
-    assert result.exit_code == ExitCode.OK, result.stdout
-    cassette = load_cassette(cassette_path)
-    interactions = cassette["http_interactions"]
-    # Then there should be the same number or fewer of requests made to the app as there are in the cassette
-    # Note. Some requests that Schemathesis can send aren't parsed by aiohttp, because of e.g. invalid characters in
-    # headers
-    assert len(app["incoming_requests"]) <= len(interactions)
-    # And if there were no requests that aiohttp failed to parse, we can compare cassette & app records
-    if len(app["incoming_requests"]) == len(interactions):
-        for interaction, request in zip(interactions, app["incoming_requests"]):
-            # And these requests should be equal
-            serialized = interaction["request"]
-            assert request.method == serialized["method"]
-            parsed = urlparse(str(request.url))
-            encoded_query = urlencode(parse_qsl(parsed.query, keep_blank_values=True))
-            encoded_path = quote_plus(unquote_plus(parsed.path), "/")
-            url = urlunparse(
-                (parsed.scheme, parsed.netloc, encoded_path, parsed.params, encoded_query, parsed.fragment)
-            )
-            assert unquote_plus(url) == unquote_plus(serialized["uri"]), request.url
-            content = await request.read()
-            if "body" in serialized:
-                assert content == base64.b64decode(serialized["body"]["base64_string"])
-                compare_headers(request, serialized["headers"])
-
-
-@pytest.mark.operations("headers")
-async def test_headers_serialization(cli, openapi2_schema_url, hypothesis_max_examples, cassette_path):
-    # See GH-783
-    # When headers contain control characters that are not directly representable in YAML
-    result = cli.run(
-        openapi2_schema_url,
-        f"--store-network-log={cassette_path}",
-        f"--hypothesis-max-examples={hypothesis_max_examples or 100}",
-        "--hypothesis-seed=1",
-        "--validate-schema=false",
-    )
-    # Then tests should pass
-    assert result.exit_code == ExitCode.OK, result.stdout
-    # And cassette can be replayed
-    result = cli.replay(str(cassette_path))
-    assert result.exit_code == ExitCode.OK, result.stdout
-    # And should be loadable
-    load_cassette(cassette_path)
-
-
-def test_multiple_cookies(base_url):
-    headers = {"User-Agent": USER_AGENT}
-    response = requests.get(f"{base_url}/success", cookies={"foo": "bar", "baz": "spam"}, headers=headers, timeout=1)
-    request = Request.from_prepared_request(response.request)
-    serialized = {
-        "uri": request.uri,
-        "method": request.method,
-        "headers": request.headers,
-        "body": {"encoding": "utf-8", "base64_string": request.body},
-    }
-    assert USER_AGENT in serialized["headers"]["User-Agent"]
-    prepared = get_prepared_request(serialized)
-    compare_headers(prepared, serialized["headers"])
-
-
-def compare_headers(request, serialized):
-    headers = HTTPHeaderDict()
-    for name, value in serialized.items():
-        for sub in value:
-            headers.add(name, sub)
-        assert request.headers[name] == headers[name]
+    assert str(cassette_path) in result.stdout
+    assert cassette_path.exists()
+    with cassette_path.open(encoding="utf-8") as fd:
+        data = json.load(fd)
+    assert "log" in data
+    assert "entries" in data["log"]
+    assert len(data["log"]["entries"]) > 1
+    for entry in data["log"]["entries"]:
+        for header in entry["request"]["headers"]:
+            if header["name"] == "Authorization":
+                if value == "true":
+                    assert header["value"] != auth
+                else:
+                    assert header["value"] == auth
 
 
 @pytest.mark.parametrize(
-    "filters, expected",
-    (
-        ({"id_": "1"}, ["1"]),
-        ({"id_": "2"}, ["2"]),
-        ({"status": "SUCCESS"}, ["1"]),
-        ({"status": "success"}, ["1"]),
-        ({"status": "ERROR"}, ["2"]),
-        ({"uri": "succe.*"}, ["1"]),
-        ({"method": "PO"}, ["2"]),
-        ({"uri": "error|failure"}, ["2", "3"]),
-        ({"uri": "error|failure", "method": "POST"}, ["2"]),
-    ),
+    ("value", "expected"),
+    [
+        (
+            "has_recent_activity=1; path=/; expires=Sat, 29 Jun 2024 18:22:49 GMT; secure; HttpOnly; SameSite=Lax",
+            [
+                harfile.Cookie(
+                    name="has_recent_activity",
+                    value="1",
+                    path="/",
+                    expires="Sat, 29 Jun 2024 18:22:49 GMT",
+                    secure=True,
+                    httpOnly=True,
+                ),
+            ],
+        ),
+        (
+            "foo=bar; spam=baz;",
+            [
+                harfile.Cookie(name="foo", value="bar"),
+                harfile.Cookie(name="spam", value="baz"),
+            ],
+        ),
+    ],
 )
-def test_filter_cassette(filters, expected):
-    cassette = [
-        {"id": "1", "status": "SUCCESS", "request": {"uri": "http://127.0.0.1/api/success", "method": "GET"}},
-        {"id": "2", "status": "ERROR", "request": {"uri": "http://127.0.0.1/api/error", "method": "POST"}},
-        {"id": "3", "status": "FAILURE", "request": {"uri": "http://127.0.0.1/api/failure", "method": "PUT"}},
-    ]
-    assert list(filter_cassette(cassette, **filters)) == [item for item in cassette if item["id"] in expected]
+def test_cookie_to_har(value, expected):
+    assert list(_cookie_to_har(value)) == expected
+
+
+@pytest.fixture(params=["tls-verify", "cert", "cert-and-key", "proxies"])
+def request_args(request, tmp_path):
+    if request.param == "tls-verify":
+        return ["--tls-verify=false"], "verify", False, ExitCode.OK
+    cert = tmp_path / "cert.tmp"
+    cert.touch()
+    if request.param == "cert":
+        return [f"--request-cert={cert}"], "cert", str(cert), ExitCode.OK
+    if request.param == "cert-and-key":
+        key = tmp_path / "key.tmp"
+        key.touch()
+        return [f"--request-cert={cert}", f"--request-cert-key={key}"], "cert", (str(cert), str(key)), ExitCode.OK
+    if request.param == "proxies":
+        if platform.system() == "Windows":
+            exit_code = ExitCode.OK
+        else:
+            exit_code = ExitCode.TESTS_FAILED
+        return ["--proxy=http://127.0.0.1"], "proxies", {"all": "http://127.0.0.1"}, exit_code
+
+
+@pytest.mark.parametrize("value", ["true", "false"])
+@pytest.mark.operations("headers")
+def test_output_sanitization(cli, openapi2_schema_url, hypothesis_max_examples, cassette_path, value):
+    auth = "secret-auth"
+    result = cli.run(
+        openapi2_schema_url,
+        f"--report-vcr-path={cassette_path}",
+        f"--max-examples={hypothesis_max_examples or 5}",
+        "--seed=1",
+        f"-H Authorization: {auth}",
+        f"--output-sanitize={value}",
+    )
+    assert result.exit_code == ExitCode.OK, result.stdout
+    cassette = load_cassette(cassette_path)
+
+    if value == "true":
+        expected = "[Filtered]"
+    else:
+        expected = ANY
+    interactions = cassette["http_interactions"]
+    assert all(entry["request"]["headers"]["X-Token"] == [expected] for entry in interactions)
+    assert all(entry["request"]["headers"]["Authorization"] == [expected] for entry in interactions)
+    # The app can reject requests, so the error won't contain this header
+    assert all(
+        entry["response"]["headers"]["X-Token"] == [expected]
+        for entry in interactions
+        if "X-Token" in entry["response"]["headers"]
+    )
+
+
+@pytest.mark.openapi_version("3.0")
+def test_forbid_preserve_bytes_without_cassette_path(cli, schema_url, snapshot_cli):
+    # When `--report-preserve-bytes` is specified without `--report-vcr-path` or `--report=vcr`
+    # Then it is an error
+    assert cli.run(schema_url, "--report-preserve-bytes") == snapshot_cli
+
+
+@pytest.mark.openapi_version("3.0")
+def test_report_dir(cli, schema_url, tmp_path):
+    # When report directory is specified with a report format
+    report_dir = tmp_path / "reports"
+    cli.run(
+        schema_url,
+        f"--report-dir={report_dir}",
+        "--report=junit",
+        "--max-examples=1",
+    )
+    # And the report should be created in the specified directory
+    assert report_dir.exists()
+    assert (report_dir / "junit.xml").exists()
+
+    # When multiple report formats are specified
+    cli.run(
+        schema_url,
+        f"--report-dir={report_dir}",
+        "--report=vcr,har",
+        "--max-examples=1",
+    )
+    # Then all reports should be created in the specified directory
+    assert (report_dir / "vcr.yaml").exists()
+    assert (report_dir / "har.json").exists()
+
+
+@given(text=st.text())
+@example("Test")
+@example("\ufeff")
+@example("\ue001")
+@example("\xa1")
+@example("\x21")
+@example("\x07")
+@example("🎉")
+def test_write_double_quoted(text):
+    stream = io.StringIO()
+    write_double_quoted(stream, text)
+    assert yaml.safe_load(stream.getvalue()) == text

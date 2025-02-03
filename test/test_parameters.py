@@ -1,19 +1,18 @@
 import datetime
-from copy import deepcopy
 
 import pytest
-import yaml
 from hypothesis import HealthCheck, assume, find, given, settings
 from hypothesis.errors import NoSuchExample
 
 import schemathesis
-from schemathesis.specs.openapi._hypothesis import STRING_FORMATS, is_valid_header
+from schemathesis.core.errors import InvalidSchema
+from schemathesis.specs.openapi._hypothesis import get_default_format_strategies, is_valid_header
 
 from .utils import as_param
 
 
-@pytest.mark.parametrize("schema_name", ("simple_swagger.yaml", "simple_openapi.yaml"))
-@pytest.mark.parametrize("type_", ("string", "integer", "array", "boolean", "number"))
+@pytest.mark.parametrize("schema_name", ["simple_swagger.yaml", "simple_openapi.yaml"])
+@pytest.mark.parametrize("type_", ["string", "integer", "array", "boolean", "number"])
 def test_headers(testdir, schema_name, type_):
     # When parameter is specified for "header"
     if schema_name == "simple_swagger.yaml":
@@ -35,13 +34,13 @@ def test_(case):
     testdir.run_and_assert(passed=1)
 
 
-@pytest.mark.parametrize("type_", ("string", "integer", "array", "object", "boolean", "number"))
+@pytest.mark.parametrize("type_", ["string", "integer", "array", "object", "boolean", "number"])
 def test_cookies(testdir, type_):
     # When parameter is specified for "cookie"
     testdir.make_test(
         """
 @schema.parametrize()
-@settings(suppress_health_check=[HealthCheck.filter_too_much], deadline=None, max_examples=3)
+@settings(suppress_health_check=[HealthCheck.filter_too_much, HealthCheck.data_too_large], deadline=None, max_examples=20)
 def test_(case):
     assert_str(case.cookies["token"])
     assert_requests_call(case)
@@ -57,7 +56,7 @@ def test_body(testdir):
     # When parameter is specified for "body"
     testdir.make_test(
         """
-@schema.parametrize(method="POST")
+@schema.include(method="POST").parametrize()
 @settings(max_examples=3, deadline=None)
 def test_(case):
     assert_int(case.body)
@@ -80,7 +79,7 @@ def test_path(testdir):
     # When parameter is specified for "path"
     testdir.make_test(
         """
-@schema.parametrize(endpoint="/users/{user_id}")
+@schema.include(path_regex="/users/{user_id}").parametrize()
 @settings(max_examples=3, deadline=None)
 def test_(case):
     assert_int(case.path_parameters["user_id"])
@@ -103,7 +102,7 @@ def test_multiple_path_variables(testdir):
     # When there are multiple parameters for "path"
     testdir.make_test(
         """
-@schema.parametrize(endpoint="/users/{user_id}/{event_id}")
+@schema.include(path_regex="/users/{user_id}/{event_id}").parametrize()
 @settings(max_examples=3, deadline=None)
 def test_(case):
     assert_int(case.path_parameters["user_id"])
@@ -130,7 +129,7 @@ def test_form_data(testdir):
     # When parameter is specified for "formData"
     testdir.make_test(
         """
-@schema.parametrize(method="POST")
+@schema.include(method="POST").parametrize()
 @settings(max_examples=1, deadline=None)
 def test_(case):
     assert_str(case.body["status"])
@@ -157,9 +156,9 @@ def schema_spec(request):
 @pytest.fixture
 def base_schema(request, schema_spec):
     if schema_spec == "swagger":
-        return deepcopy(request.getfixturevalue("simple_schema"))
+        return request.getfixturevalue("simple_schema")
     if schema_spec == "openapi":
-        return deepcopy(request.getfixturevalue("simple_openapi"))
+        return request.getfixturevalue("simple_openapi")
 
 
 @pytest.fixture(params=["header", "query"])
@@ -189,6 +188,7 @@ def test_security_definitions_api_key(testdir, schema, location):
 @schema.parametrize()
 @settings(max_examples=1, deadline=None)
 def test_(case):
+    assert case.operation.get_security_requirements() == ["api_key"]
     assert_str(case.{location}["api_key"])
     assert_requests_call(case)
         """,
@@ -200,11 +200,10 @@ def test_(case):
 
 @pytest.fixture
 def cookie_schema(simple_openapi):
-    schema = deepcopy(simple_openapi)
-    components = schema.setdefault("components", {})
+    components = simple_openapi.setdefault("components", {})
     components["securitySchemes"] = {"api_key": {"type": "apiKey", "name": "api_key", "in": "cookie"}}
-    schema["security"] = [{"api_key": []}]
-    return schema
+    simple_openapi["security"] = [{"api_key": []}]
+    return simple_openapi
 
 
 def test_security_definitions_api_key_cookie(testdir, cookie_schema):
@@ -226,7 +225,7 @@ def test_(case):
 
 def _assert_parameter(schema, schema_spec, location, expected=None):
     # When security definition is defined as "apiKey"
-    schema = schemathesis.from_dict(schema)
+    schema = schemathesis.openapi.from_dict(schema)
     if schema_spec == "swagger":
         operation = schema["/users"]["get"]
         expected = (
@@ -260,7 +259,7 @@ def test_security_as_parameters_api_key_overridden(overridden_security_schema, s
     _assert_parameter(overridden_security_schema, schema_spec, location, [])
 
 
-@pytest.fixture()
+@pytest.fixture
 def overridden_security_schema(schema, schema_spec):
     if schema_spec == "swagger":
         schema["paths"]["/users"]["get"]["security"] = []
@@ -286,7 +285,7 @@ def test_(case):
     testdir.run_and_assert(passed=1)
 
 
-@pytest.fixture()
+@pytest.fixture
 def basic_auth_schema(base_schema, schema_spec):
     if schema_spec == "swagger":
         base_schema["securityDefinitions"] = {"basic_auth": {"type": "basic"}}
@@ -320,10 +319,9 @@ def test_(case):
 
 def test_security_definitions_bearer_auth(testdir, simple_openapi):
     # When schema is using HTTP Bearer Auth scheme
-    schema = deepcopy(simple_openapi)
-    components = schema.setdefault("components", {})
+    components = simple_openapi.setdefault("components", {})
     components["securitySchemes"] = {"bearer_auth": {"type": "http", "scheme": "bearer"}}
-    schema["security"] = [{"bearer_auth": []}]
+    simple_openapi["security"] = [{"bearer_auth": []}]
     testdir.make_test(
         """
 @schema.parametrize()
@@ -334,18 +332,19 @@ def test_(case):
     assert auth.startswith("Bearer ")
     assert_requests_call(case)
         """,
-        schema=schema,
+        schema=simple_openapi,
     )
     # Then the generated test case should contain a valid "Authorization" header
     testdir.run_and_assert("-s", passed=1)
 
 
 def test_bearer_auth_valid_header():
-    # When a HTTP Bearer Auth headers is generated
+    # When an HTTP Bearer Auth headers is generated
     # Then it should be a valid header
     # And no invalid headers should be generated
+    strategy = get_default_format_strategies()["_bearer_auth"]
     with pytest.raises(NoSuchExample):
-        find(STRING_FORMATS["_bearer_auth"], lambda x: not is_valid_header({"x": x}))
+        find(strategy, lambda x: not is_valid_header({"x": x}))
 
 
 def test_unknown_data(testdir):
@@ -359,19 +358,16 @@ def test_(case):
     pass
         """,
         **as_param({"name": "status", "in": "unknown", "required": True, "type": "string"}),
-        validate_schema=False,
     )
     # Then the generated test ignores this parameter
     testdir.run_and_assert(passed=1)
 
 
 @pytest.mark.hypothesis_nested
-def test_date_deserializing(testdir):
+def test_date_deserializing(ctx):
     # When dates in schema are written without quotes (achieved by dumping the schema with date instances)
-    schema = {
-        "openapi": "3.0.2",
-        "info": {"title": "Test", "description": "Test", "version": "0.1.0"},
-        "paths": {
+    schema_path = ctx.openapi.write_schema(
+        {
             "/teapot": {
                 "get": {
                     "summary": "Test",
@@ -393,12 +389,11 @@ def test_date_deserializing(testdir):
                 }
             }
         },
-    }
-
-    schema_path = testdir.makefile(".yaml", schema=yaml.dump(schema))
+        format="yaml",
+    )
     # Then yaml loader should ignore it
     # And data generation should work without errors
-    schema = schemathesis.from_path(str(schema_path))
+    schema = schemathesis.openapi.from_path(str(schema_path))
 
     @given(case=schema["/teapot"]["GET"].as_strategy())
     @settings(suppress_health_check=[HealthCheck.filter_too_much])
@@ -408,22 +403,6 @@ def test_date_deserializing(testdir):
     test()
 
 
-def test_get_request_with_body(testdir, schema_with_get_payload):
-    # When schema defines a payload for GET request
-    # And schema validation is turned on
-    testdir.make_test(
-        """
-@schema.parametrize()
-def test_(case):
-    pass
-        """,
-        schema=schema_with_get_payload,
-    )
-    # Then an error should be propagated with a relevant error message
-    result = testdir.run_and_assert(failed=1)
-    result.stdout.re_match_lines([r"E +InvalidSchema: Body parameters are defined for GET request."])
-
-
 def test_json_media_type(testdir):
     # When API operation expects a JSON-compatible media type
     testdir.make_test(
@@ -431,7 +410,7 @@ def test_json_media_type(testdir):
 @settings(max_examples=10, deadline=None)
 @schema.parametrize()
 def test_(case):
-    kwargs = case.as_requests_kwargs()
+    kwargs = case.as_transport_kwargs()
     assert kwargs["headers"]["Content-Type"] == "application/problem+json"
     assert "key" in kwargs["json"]
     assert_requests_call(case)
@@ -468,27 +447,29 @@ def test_(case):
     testdir.run_and_assert(passed=1)
 
 
-def test_nullable_body_behind_a_reference(empty_open_api_2_schema):
+def test_nullable_body_behind_a_reference(ctx):
     # When a body parameter is nullable and is behind a reference
-    empty_open_api_2_schema["parameters"] = {
-        "Foo": {
-            "in": "body",
-            "name": "payload",
-            "required": True,
-            "schema": {"type": "string"},
-            "x-nullable": True,
-        }
-    }
-    empty_open_api_2_schema["paths"] = {
-        "/payload": {
-            "post": {
-                "parameters": [{"$ref": "#/parameters/Foo"}],
-                "responses": {"200": {"description": "OK"}},
+    raw_schema = ctx.openapi.build_schema(
+        {
+            "/payload": {
+                "post": {
+                    "parameters": [{"$ref": "#/parameters/Foo"}],
+                    "responses": {"200": {"description": "OK"}},
+                }
             }
-        }
-    }
+        },
+        parameters={
+            "Foo": {
+                "in": "body",
+                "name": "payload",
+                "required": True,
+                "schema": {"type": "string"},
+                "x-nullable": True,
+            }
+        },
+    )
     # Then it should be properly collected
-    schema = schemathesis.from_dict(empty_open_api_2_schema)
+    schema = schemathesis.openapi.from_dict(raw_schema)
     operation = schema["/payload"]["POST"]
     # And its definition is not transformed to JSON Schema
     assert operation.body[0].definition == {
@@ -501,42 +482,45 @@ def test_nullable_body_behind_a_reference(empty_open_api_2_schema):
 
 
 @pytest.fixture(params=["aiohttp", "flask"])
-def api_schema(request, openapi_version):
+def api_schema(ctx, request, openapi_version):
     if openapi_version.is_openapi_2:
-        schema = request.getfixturevalue("empty_open_api_2_schema")
-        schema["paths"] = {
-            "/payload": {
-                "post": {
-                    "parameters": [
-                        {
-                            "in": "body",
-                            "required": True,
-                            "name": "payload",
-                            "schema": {"type": "boolean", "x-nullable": True},
-                        }
-                    ],
-                    "responses": {"200": {"description": "OK"}},
+        schema = ctx.openapi.build_schema(
+            {
+                "/payload": {
+                    "post": {
+                        "parameters": [
+                            {
+                                "in": "body",
+                                "required": True,
+                                "name": "payload",
+                                "schema": {"type": "boolean", "x-nullable": True},
+                            }
+                        ],
+                        "responses": {"200": {"description": "OK"}},
+                    }
                 }
-            }
-        }
+            },
+            version="2.0",
+        )
     else:
-        schema = request.getfixturevalue("empty_open_api_3_schema")
-        schema["paths"] = {
-            "/payload": {
-                "post": {
-                    "requestBody": {
-                        "required": True,
-                        "content": {"application/json": {"schema": {"type": "boolean", "nullable": True}}},
-                    },
-                    "responses": {"200": {"description": "OK"}},
+        schema = ctx.openapi.build_schema(
+            {
+                "/payload": {
+                    "post": {
+                        "requestBody": {
+                            "required": True,
+                            "content": {"application/json": {"schema": {"type": "boolean", "nullable": True}}},
+                        },
+                        "responses": {"200": {"description": "OK"}},
+                    }
                 }
             }
-        }
+        )
     if request.param == "aiohttp":
         base_url = request.getfixturevalue("base_url")
-        return schemathesis.from_dict(schema, base_url=base_url)
+        return schemathesis.openapi.from_dict(schema).configure(base_url=base_url)
     app = request.getfixturevalue("flask_app")
-    return schemathesis.from_dict(schema, app=app, base_url="/api")
+    return schemathesis.openapi.from_dict(schema).configure(base_url="/api", app=app)
 
 
 @pytest.mark.hypothesis_nested
@@ -545,21 +529,13 @@ def test_null_body(api_schema):
     # When API operation expects `null` as payload
 
     @given(case=api_schema["/payload"]["POST"].as_strategy())
-    @settings(max_examples=5)
+    @settings(max_examples=5, deadline=None)
     def test(case):
         assume(case.body is None)
         # Then it should be possible to send `null`
-        if case.app is not None:
-            response = case.call_wsgi()
-        else:
-            response = case.call()
-        case.validate_response(response)
-        if case.app is None:
-            data = response.content
-        else:
-            data = response.data.strip()
+        response = case.call_and_validate()
         # And the application should return what was sent (`/payload` behaves this way)
-        assert data == b"null"
+        assert response.content.strip() == b"null"
 
     test()
 
@@ -567,15 +543,14 @@ def test_null_body(api_schema):
 @pytest.mark.operations("read_only")
 def test_read_only(schema_url):
     # When API operation has `readOnly` properties
-    schema = schemathesis.from_uri(schema_url)
+    schema = schemathesis.openapi.from_url(schema_url)
 
     @given(case=schema["/read_only"]["GET"].as_strategy())
-    @settings(max_examples=1)
+    @settings(max_examples=1, deadline=None)
     def test(case):
         # Then `writeOnly` should not affect the response schema
-        response = case.call()
+        response = case.call_and_validate()
         assert "write" not in response.json()
-        case.validate_response(response)
 
     test()
 
@@ -583,7 +558,7 @@ def test_read_only(schema_url):
 @pytest.mark.operations("write_only")
 def test_write_only(schema_url):
     # When API operation has `writeOnly` properties
-    schema = schemathesis.from_uri(schema_url)
+    schema = schemathesis.openapi.from_url(schema_url)
 
     @given(case=schema["/write_only"]["POST"].as_strategy())
     @settings(max_examples=1)
@@ -592,8 +567,29 @@ def test_write_only(schema_url):
         assert "write" in case.body
         assert "read" not in case.body
         # And `readOnly` should only occur in responses
-        response = case.call()
+        response = case.call_and_validate()
         assert "write" not in response.json()
-        case.validate_response(response)
 
     test()
+
+
+@pytest.mark.parametrize("location", ["path", "query", "header", "cookie"])
+def test_missing_content_and_schema(ctx, location):
+    # When an Open API 3 parameter is missing `schema` & `content`
+    schema = ctx.openapi.build_schema(
+        {"/foo": {"get": {"parameters": [{"in": location, "name": "X-Foo", "required": True}]}}}
+    )
+    schema = schemathesis.openapi.from_dict(schema)
+
+    @given(schema["/foo"]["GET"].as_strategy())
+    @settings(max_examples=1)
+    def test(case):
+        pass
+
+    # Then the proper error should be shown
+    with pytest.raises(
+        InvalidSchema,
+        match=f'Can not generate data for {location} parameter "X-Foo"! '
+        "It should have either `schema` or `content` keywords defined",
+    ):
+        test()

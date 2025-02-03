@@ -1,0 +1,54 @@
+Exit code: 1
+---
+Stdout:
+Schemathesis dev
+━━━━━━━━━━━━━━━━
+
+
+ ✅  Loaded specification from /tmp/schema.json (in N ms)
+
+     Base URL:         http://127.0.0.1/api
+     Specification:    Open API 3.0.2
+     Operations:       2 selected / 2 total
+
+
+ ✅  API capabilities:
+
+     Supports NULL byte in headers:    ✘
+
+ 🚫  Unit tests (in N ms)
+
+     ✅ 1 passed  🚫 1 errors
+
+==================================== ERRORS ====================================
+__________________________________ POST /foo ___________________________________
+Schema Error
+
+Invalid regular expression. Pattern `\\p{Alpha}` is not recognized - `bad escape \p at position 0`
+
+Tip: Ensure your regex is compatible with Python's syntax.
+For guidance, visit: https://docs.python.org/3/library/re.html
+
+Need more help?
+    Join our Discord server: https://discord.gg/R9ASRAmHnA
+=================================== SUMMARY ====================================
+
+API Operations:
+  Selected: 2/2
+  Tested: 1
+  Errored: 1
+
+Test Phases:
+  ✅ API probing
+  🚫 Unit testing
+  ⏭️ Stateful testing (not applicable)
+
+Errors:
+  🚫 Schema Error: 1
+
+Test cases:
+  N generated, N passed
+
+Seed: 42
+
+=============================== 1 error in 1.00s ===============================

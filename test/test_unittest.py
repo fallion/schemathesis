@@ -12,7 +12,6 @@ def pythonpath_fix(monkeypatch):
 
 
 def test_unittest_success(testdir):
-
     module = testdir.make_test(
         """
 from unittest import TestCase
@@ -21,7 +20,6 @@ class TestSchema(TestCase):
 
     @given(case=schema["/users"]["GET"].as_strategy())
     def test_something(self, case):
-        assert case.full_path == "/v1/users"
         assert case.method == "GET"
 """
     )
@@ -45,4 +43,4 @@ class TestSchema(TestCase):
     result = testdir.run(sys.executable, "-m", "unittest", str(module))
     assert result.ret == 1
     result.stderr.re_match_lines([".* assert 0.*", "FAILED (failures=1)"])
-    result.stdout.re_match_lines(["Falsifying example: .*"])
+    result.stderr.re_match_lines(["Falsifying example: .*"])

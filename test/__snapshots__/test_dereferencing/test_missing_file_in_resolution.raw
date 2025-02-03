@@ -1,0 +1,56 @@
+Exit code: 1
+---
+Stdout:
+Schemathesis dev
+━━━━━━━━━━━━━━━━
+
+
+ ✅  Loaded specification from /tmp/root/openapi.json (in N ms)
+
+     Base URL:         http://127.0.0.1/api
+     Specification:    Open API 3.0.2
+     Operations:       0 selected / 0 total
+
+
+ ✅  API capabilities:
+
+     Supports NULL byte in headers:    ✘
+
+ 🚫  Unit tests (in N ms)
+
+     No tests were run
+
+==================================== ERRORS ====================================
+____________________________________ /test _____________________________________
+Schema Error
+
+Unresolvable JSON pointer in the schema
+
+Error details:
+    JSON pointer: 'paths/test.json'
+    This typically means that the schema is referencing a component that doesn't exist.
+
+Ensure that the definition complies with the OpenAPI specification
+
+Need more help?
+    Join our Discord server: https://discord.gg/R9ASRAmHnA
+=================================== SUMMARY ====================================
+
+API Operations:
+  Selected: 0/0
+  Tested: 0
+
+Test Phases:
+  ✅ API probing
+  🚫 Unit testing
+  ⏭️ Stateful testing (not applicable)
+
+Errors:
+  🚫 Schema Error: 1
+
+Test cases:
+  No test cases were generated
+
+Seed: 42
+
+=============================== 1 error in 1.00s ===============================

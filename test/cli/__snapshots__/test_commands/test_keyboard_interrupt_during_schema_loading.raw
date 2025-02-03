@@ -1,0 +1,8 @@
+Exit code: 0
+---
+Stdout:
+Schemathesis dev
+━━━━━━━━━━━━━━━━
+
+
+ ⚡  Loading interrupted after N ms while loading from http://127.0.0.1/schema.yaml

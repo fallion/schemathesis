@@ -1,48 +1,82 @@
-import graphene
+from typing import List, Tuple
+
+import strawberry
 
 
-class Book(graphene.ObjectType):
-    title = graphene.String()
-    author = graphene.Field(lambda: Author)
-
-    def resolve_author(self, info):
-        return AUTHORS.get(self.author)
+@strawberry.type
+class Book:
+    title: str
+    author: "Author"
 
 
-class Author(graphene.ObjectType):
-    name = graphene.String()
-    books = graphene.List(Book)
-
-    def resolve_books(self, info):
-        if len(info.path.as_list()) > 7:
-            raise ValueError("Hidden bug")
-        return [BOOKS.get(book) for book in self.books]
+@strawberry.type
+class Author:
+    name: str
+    books: List[Book]
 
 
-AUTHORS = {
-    1: Author(name="J.R.R Tolkien", books=[1, 2, 3]),
-    2: Author(name="Tove Marika Jansson", books=[4, 5, 6]),
-}
+TOLKIEN = Author(name="J.R.R Tolkien", books=[])
+JANSSON = Author(name="Tove Marika Jansson", books=[])
+
 
 BOOKS = {
-    1: Book(title="The Fellowship of the Ring", author=1),
-    2: Book(title="The Two Towers", author=1),
-    3: Book(title="The Return of the King", author=1),
-    4: Book(title="Kometen kommer", author=2),
-    5: Book(title="Trollvinter", author=2),
-    6: Book(title="Farlig midsommar", author=2),
+    1: Book(title="The Fellowship of the Ring", author=TOLKIEN),
+    2: Book(title="The Two Towers", author=TOLKIEN),
+    3: Book(title="The Return of the King", author=TOLKIEN),
+    4: Book(title="Kometen kommer", author=JANSSON),
+    5: Book(title="Trollvinter", author=JANSSON),
+    6: Book(title="Farlig midsommar", author=JANSSON),
+}
+TOLKIEN.books = [BOOKS[1], BOOKS[2], BOOKS[3]]
+JANSSON.books = [BOOKS[4], BOOKS[5], BOOKS[6]]
+
+AUTHORS = {
+    1: TOLKIEN,
+    2: JANSSON,
 }
 
 
-class Query(graphene.ObjectType):
-    getBooks = graphene.List(Book)
-    getAuthors = graphene.List(Author)
-
-    def resolve_getBooks(root, info):
+@strawberry.type
+class Query:
+    @strawberry.field
+    def getBooks(self) -> List[Book]:
         return list(BOOKS.values())
 
-    def resolve_getAuthors(root, info):
+    @strawberry.field
+    def getAuthors(self) -> List[Author]:
         return list(AUTHORS.values())
 
 
-schema = graphene.Schema(query=Query)
+def get_or_create_author(name: str) -> Tuple[int, Author]:
+    for author_id, author in AUTHORS.items():  # noqa: B007
+        if author.name == name:
+            break
+    else:
+        author = Author(name=name, books=[])
+        author_id = len(AUTHORS) + 1
+        AUTHORS[author_id] = author
+    return author_id, author
+
+
+@strawberry.type
+class Mutation:
+    @strawberry.mutation
+    def addBook(self, title: str, author: str) -> Book:
+        for book in BOOKS.values():
+            if book.title == title:
+                break
+        else:
+            # New book and potentially new author
+            author_id, author = get_or_create_author(author)
+            book = Book(title=title, author=author)
+            book_id = len(BOOKS) + 1
+            BOOKS[book_id] = book
+            author.books.append(book)
+        return book
+
+    @strawberry.mutation
+    def addAuthor(self, name: str) -> Author:
+        return get_or_create_author(name)[1]
+
+
+schema = strawberry.Schema(Query, Mutation)

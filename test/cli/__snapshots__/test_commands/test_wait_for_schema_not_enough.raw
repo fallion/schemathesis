@@ -1,0 +1,14 @@
+Exit code: 1
+---
+Stdout:
+Schemathesis dev
+━━━━━━━━━━━━━━━━
+
+
+ ❌  Failed to load specification from http://127.0.0.1/schema.yaml after N ms
+
+ Schema Loading Error
+
+ Connection failed
+
+     Failed to establish a new connection: [Error NUM] Connection refused

@@ -1,0 +1,52 @@
+Exit code: 1
+---
+Stdout:
+Schemathesis dev
+━━━━━━━━━━━━━━━━
+
+
+ ✅  Loaded specification from /tmp/schema.json (in N ms)
+
+     Base URL:         http://127.0.0.1/api
+     Specification:    Open API 3.0.2
+     Operations:       1 selected / 1 total
+
+
+ ✅  API capabilities:
+
+     Supports NULL byte in headers:    ✘
+
+ 🚫  Unit tests (in N ms)
+
+     🚫 1 errors
+
+==================================== ERRORS ====================================
+__________________________________ POST /csv ___________________________________
+Serialization not possible
+
+Failed to generate test cases from examples for this API operation because of unsupported payload media types: text/csv
+You can register your own serializer with `schemathesis.serializer` and Schemathesis will be able to make API calls with this media type.
+See https://schemathesis.readthedocs.io/en/stable/how.html#payload-serialization for more information.
+
+Need more help?
+    Join our Discord server: https://discord.gg/R9ASRAmHnA
+=================================== SUMMARY ====================================
+
+API Operations:
+  Selected: 1/1
+  Tested: 1
+
+Test Phases:
+  ✅ API probing
+  🚫 Unit testing
+  ⏭️ Stateful testing (not applicable)
+
+Errors:
+  🚫 Serialization not possible: 1
+
+Test cases:
+  N generated, N passed
+
+Seed: 42
+
+=============================== 1 error in 1.00s ===============================

@@ -1,0 +1,71 @@
+Exit code: 1
+---
+Stdout:
+Schemathesis dev
+━━━━━━━━━━━━━━━━
+
+
+ ✅  Loaded specification from http://127.0.0.1/schema.yaml (in N ms)
+
+     Base URL:         http://127.0.0.1/api
+     Specification:    Open API 3.0.2
+     Operations:       1 selected / 1 total
+
+
+ ✅  API capabilities:
+
+     Supports NULL byte in headers:    ✘
+
+ ❌  Unit tests (in N ms)
+
+     ❌ 1 failed
+
+=================================== FAILURES ===================================
+__________________________________ GET /basic __________________________________
+1. Test Case ID: <PLACEHOLDER>
+
+- Undocumented HTTP status code
+
+    Received: 401
+    Documented: 200
+
+[401] Unauthorized:
+
+    `{"detail": "Unauthorized"}`
+
+Reproduce with:
+
+    curl -X GET -H 'Authorization: Basic J3Rlc3Q6d3Jvbmcn' http://127.0.0.1/api/basic
+
+=================================== WARNINGS ===================================
+
+Missing or invalid API credentials: 1 API operation returned authentication errors
+
+401 Unauthorized (1 operation):
+  - GET /basic
+
+Tip: Use --auth or -H to provide authentication credentials
+
+=================================== SUMMARY ====================================
+
+API Operations:
+  Selected: 1/1
+  Tested: 1
+
+Test Phases:
+  ✅ API probing
+  ❌ Unit testing
+  ⏭️ Stateful testing (not applicable)
+
+Failures:
+  ❌ Undocumented HTTP status code: 1
+
+Warnings:
+  ⚠️ Missing authentication: 1
+
+Test cases:
+  N generated, N found N unique failures
+
+Seed: 42
+
+======================== 1 failure, 1 warning in 1.00s =========================

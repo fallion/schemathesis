@@ -1,150 +1,123 @@
-name: Build jobs
-# Triggered by changes in code-specific or job-specific files
+name: CI
 
 on:
   pull_request:
     paths:
-      - '**.py'
-      - '.github/workflows/*.yml'
-      - '.pylintrc'
-      - '.pre-commit-config.yaml'
-      - '.pydocstyle'
-      - '.relint.yml'
-      - '.yamllint'
-      - 'poetry.lock'
-      - 'pyproject.toml'
-      - 'tox.ini'
-      - 'mypy.ini'
-      - '!docs/**'
+      - "**.py"
+      - ".github/workflows/*.yml"
+      - ".pre-commit-config.yaml"
+      - ".relint.yml"
+      - ".yamllint"
+      - "pyproject.toml"
+      - "tox.ini"
+      - "mypy.ini"
   push:
     branches:
       - master
   workflow_dispatch:
 
+env:
+  FORCE_COLOR: "1"
+  TOX_TESTENV_PASSENV: FORCE_COLOR
+
 jobs:
   pre-commit:
     name: Generic pre-commit checks
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4.2.1
         with:
           fetch-depth: 1
 
-      - uses: actions/setup-python@v2
+      - uses: actions/setup-python@v5
         with:
-          python-version: 3.9
+          python-version: 3.11
 
-      - run: pip install pre-commit
-      - run: SKIP=pylint,mypy pre-commit run --all-files
+      - uses: hynek/setup-cached-uv@v2
 
-  pylint:
-    name: Pylint
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v2
-        with:
-          fetch-depth: 1
-
-      - uses: actions/setup-python@v2
-        with:
-          python-version: 3.9
-
-      - run: pip install pre-commit
-      - run: pre-commit run pylint --all-files
-
-  mypy:
-    name: Mypy
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v2
-        with:
-          fetch-depth: 1
-
-      - uses: actions/setup-python@v2
-        with:
-          python-version: 3.9
-
-      - run: pip install pre-commit
-      - run: pre-commit run mypy --all-files
+      - run: uvx pre-commit run --all-files
 
   docs:
-    name: Documentation check
-    runs-on: ubuntu-latest
+    name: Documentation
+    runs-on: ubuntu-22.04
     steps:
-     - uses: actions/checkout@v2
-       with:
-         fetch-depth: 1
-     - uses: ammaraskar/sphinx-action@master
-       with:
-         docs-folder: "docs/"
+      - uses: actions/checkout@v4.2.1
+        with:
+          fetch-depth: 1
+      - uses: ammaraskar/sphinx-action@8.1.3
+        with:
+          docs-folder: "docs/"
 
   tests:
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest]
-        python: [3.6, 3.7, 3.8, 3.9]
+        os: [ubuntu-22.04, windows-2019]
+        python: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+      fail-fast: false
 
-    name: ${{ matrix.os }}/tests_${{ matrix.python }}
+    name: Tests (Python ${{ matrix.python }} on ${{ matrix.os }} ${{ matrix.tox_env }})
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4.2.1
         with:
           fetch-depth: 1
 
-      - uses: actions/setup-python@v2
+      - uses: actions/setup-python@v5
         with:
-          python-version: '${{ matrix.python }}.0-dev - ${{ matrix.python }}.X'
+          python-version: ${{ matrix.python }}
 
-      - run: pip install tox coverage "poetry<1.1.9" "poetry-core<1.0.5"
+      - uses: hynek/setup-cached-uv@v2
 
-      - name: Run ${{ matrix.python }} tox job
-        run: tox -e py${TOX_JOB//.} # Strip dot from python version to match tox job
-        env:
-          TOX_JOB: ${{ matrix.python }}
+      - if: ${{ matrix.tox_env }}
+        run: uvx --with="tox" --with="tox-gh-actions" --with="tox-uv" tox -e ${{ matrix.tox_env }}
 
-      - run: coverage combine
-      - run: coverage report
-      - run: coverage xml -i
+      - if: ${{ !matrix.tox_env }}
+        run: uvx --with="tox" --with="tox-gh-actions" --with="tox-uv" tox
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v1.0.7
+        uses: codecov/codecov-action@v5.3.1
         with:
-          token: ${{secrets.CODECOV_TOKEN}}
-          file: ./coverage.xml
-          flags: unittests
-          name: codecov-py36
+          token: ${{ secrets.CODECOV_TOKEN }}
 
-  pytest-legacy:
+  # On windows redirecting output to a file could lead to an error due to the default IO encoding being CP-1252
+  tests-pipe-with-encoding:
     strategy:
       matrix:
-        os: [ubuntu-latest]
-        tox_job:
-          - py3-pytest53
-
-    name: ${{ matrix.os }}/tests_${{ matrix.tox_job }}
+        os: [ubuntu-22.04, windows-2019]
+      fail-fast: false
+    name: Test piping output to a file with CP1252 encoding on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     steps:
-    - uses: actions/checkout@v2
-      with:
-        fetch-depth: 1
+      - uses: actions/checkout@v4.2.1
+        with:
+          fetch-depth: 1
 
-    - uses: actions/setup-python@v2
-      with:
-        python-version: 3.7
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
-    - run: pip install tox coverage "poetry<1.1.9" "poetry-core<1.0.5"
+      - uses: hynek/setup-cached-uv@v2
 
-    - name: Run ${{ matrix.tox_job }} tox job
-      run: tox -e ${{ matrix.tox_job }}
+      - run: uv tool install ".[dev]"
 
-    - run: coverage combine
-    - run: coverage report
-    - run: coverage xml -i
+      - run: uv tool run schemathesis run /openapi.json --app=cp1252_app:app -c custom_check > out.txt || true
+        working-directory: ./test/apps
+        env:
+          SCHEMATHESIS_HOOKS: hooks
+          PYTHONIOENCODING: cp1252
 
-    - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v1.0.7
-      with:
-        token: ${{secrets.CODECOV_TOKEN}}
-        file: ./coverage.xml
-        flags: unittests
-        name: codecov-py36-legacy-pytest
+      - run: |
+          if grep -Fq "UnicodeEncodeError" "out.txt"; then
+            echo "Failed!"
+            exit 1
+          fi
+        working-directory: ./test/apps
+        shell: bash
+
+  spell-check:
+    name: Spell Check
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: crate-ci/typos@master

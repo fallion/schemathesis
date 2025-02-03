@@ -1,12 +1,23 @@
 import csv
+import string
+from contextlib import suppress
 from io import StringIO
-from test.utils import assert_requests_call
+from xml.etree import ElementTree
 
 import pytest
-from hypothesis import given, settings
+from hypothesis import HealthCheck, Phase, given, settings
+from hypothesis import strategies as st
 
 import schemathesis
-from schemathesis.exceptions import SerializationNotPossible
+from schemathesis.core.errors import (
+    SERIALIZATION_FOR_TYPE_IS_NOT_POSSIBLE_MESSAGE,
+    SerializationError,
+    SerializationNotPossible,
+)
+from schemathesis.core.transforms import deepclone
+from schemathesis.transport.requests import REQUESTS_TRANSPORT, RequestsTransport
+from schemathesis.transport.wsgi import WSGI_TRANSPORT, WSGITransport
+from test.utils import assert_requests_call
 
 
 def to_csv(data):
@@ -22,29 +33,24 @@ def to_csv(data):
 
 @pytest.fixture
 def csv_serializer():
-    @schemathesis.serializers.register("text/csv", aliases=["text/tsv"])
-    class CSVSerializer:
-        def as_requests(self, context, value):
-            return {"data": to_csv(value)}
-
-        def as_werkzeug(self, context, value):
-            return {"data": to_csv(value)}
-
-    assert schemathesis.serializers.SERIALIZERS["text/csv"] is CSVSerializer
-    assert schemathesis.serializers.SERIALIZERS["text/tsv"] is CSVSerializer
+    @REQUESTS_TRANSPORT.serializer("text/csv")
+    @WSGI_TRANSPORT.serializer("text/csv")
+    def serialize_csv(ctx, value):
+        return {"data": to_csv(value)}
 
     yield
 
-    schemathesis.serializers.unregister("text/csv")
+    for transport in (REQUESTS_TRANSPORT, WSGI_TRANSPORT):
+        transport.unregister_serializer("text/csv", "text/tsv")
 
 
 @pytest.fixture(params=["aiohttp", "flask"])
 def api_schema(request, openapi_version):
     if request.param == "aiohttp":
         schema_url = request.getfixturevalue("schema_url")
-        return schemathesis.from_uri(schema_url)
+        return schemathesis.openapi.from_url(schema_url)
     app = request.getfixturevalue("flask_app")
-    return schemathesis.from_wsgi("/schema.yaml", app=app)
+    return schemathesis.openapi.from_wsgi("/schema.yaml", app=app)
 
 
 @pytest.mark.hypothesis_nested
@@ -55,107 +61,474 @@ def test_text_csv(api_schema):
     # And the user registers a custom serializer for it
 
     @given(case=api_schema["/csv"]["POST"].as_strategy())
-    @settings(max_examples=5)
+    @settings(max_examples=5, deadline=None)
     def test(case):
-        if case.app is not None:
-            response = case.call_wsgi()
-        else:
-            response = case.call()
         # Then this serializer should be used
-        case.validate_response(response)
+        response = case.call_and_validate()
         # And data should be successfully sent to the API as CSV
-        if case.app is not None:
-            data = response.json
-        else:
-            data = response.json()
-        assert data == case.body
+        assert response.json() == case.body
 
     test()
 
 
-def test_register_incomplete_serializer():
-    # When register a new serializer without a required method
-    # Then you'll have a TypeError
-    with pytest.raises(TypeError, match="`CSVSerializer` is not a valid serializer."):
-
-        @schemathesis.serializers.register("text/csv")
-        class CSVSerializer:
-            def as_requests(self, context, value):
-                return {}
+@pytest.fixture
+def tsv_schema(schema_url):
+    schema = schemathesis.openapi.from_url(schema_url)
+    definition = schema.raw_schema["paths"]["/csv"]["post"]
+    if "consumes" in definition:
+        definition["consumes"] = ["text/tsv"]
+    else:
+        definition["requestBody"]["content"]["text/tsv"] = definition["requestBody"]["content"].pop("text/csv")
+    return schema
 
 
 @pytest.mark.hypothesis_nested
 @pytest.mark.operations("csv_payload")
-def test_no_serialization_possible(api_schema):
-    # When API expects `text/csv`
+def test_no_serialization_possible(tsv_schema):
+    # When API expects `text/tsv`
     # And there is no registered serializer for this media type
 
-    @given(case=api_schema["/csv"]["POST"].as_strategy())
+    @given(case=tsv_schema["/csv"]["POST"].as_strategy())
     @settings(max_examples=5)
     def test(case):
-        # Then there should be an error indicating this
-        with pytest.raises(
-            SerializationNotPossible,
-            match="Schemathesis can't serialize data to any of the defined media types: text/csv",
-        ):
-            if case.app is not None:
-                case.call_wsgi()
-            else:
-                case.call()
+        pass
 
-    test()
+    # Then there should be an error indicating this
+    with pytest.raises(
+        SerializationNotPossible,
+        match="Schemathesis can't serialize data to any of the defined media types: text/tsv",
+    ):
+        test()
 
 
-@pytest.mark.parametrize("method", ("as_requests_kwargs", "as_werkzeug_kwargs"))
-def test_serialize_yaml(open_api_3_schema_with_yaml_payload, method):
+@pytest.mark.openapi_version("3.0")
+@pytest.mark.operations("csv_payload")
+def test_in_cli(ctx, cli, tsv_schema, snapshot_cli, openapi3_base_url):
+    schema_path = ctx.openapi.write_schema(tsv_schema.raw_schema["paths"])
+    assert cli.run(str(schema_path), f"--url={openapi3_base_url}") == snapshot_cli
+
+
+@pytest.mark.parametrize("transport", [RequestsTransport, WSGITransport])
+def test_serialize_yaml(open_api_3_schema_with_yaml_payload, transport):
     # See GH-1010
     # When API expects `text/yaml`
-    schema = schemathesis.from_dict(open_api_3_schema_with_yaml_payload)
+    schema = schemathesis.openapi.from_dict(open_api_3_schema_with_yaml_payload)
+
+    if transport is WSGITransport:
+        schema.app = 42
 
     @given(case=schema["/yaml"]["POST"].as_strategy())
     @settings(max_examples=1)
     def test(case):
         # Then Schemathesis should generate valid YAML, not JSON with `application/json` media type
-        kwargs = getattr(case, method)()
+        kwargs = case.as_transport_kwargs()
         assert kwargs["headers"]["Content-Type"] == "text/yaml"
         assert kwargs["data"] == "- 42\n"
 
     test()
 
 
-@pytest.mark.parametrize(
-    "media_type", ("text/yaml", "application/x-www-form-urlencoded", "text/plain", "multipart/form-data")
-)
-def test_binary_data(empty_open_api_3_schema, media_type):
-    empty_open_api_3_schema["paths"] = {
-        "/test": {
-            "post": {
-                "requestBody": {
-                    "required": True,
-                    "content": {
-                        media_type: {
-                            "schema": {},
-                            "examples": {"answer": {"externalValue": f"http://127.0.0.1:1/answer.json"}},
-                        }
+def test_serialize_any(ctx):
+    # See GH-1526
+    # When API expects `*/*`
+    schema = ctx.openapi.build_schema(
+        {
+            "/any": {
+                "post": {
+                    "requestBody": {
+                        "required": True,
+                        "content": {"*/*": {"schema": {"type": "array"}}},
                     },
+                    "responses": {"200": {"description": "OK"}},
                 },
-                "responses": {"200": {"description": "OK"}},
             },
-        },
-    }
-    schema = schemathesis.from_dict(empty_open_api_3_schema)
+        }
+    )
+    schema = schemathesis.openapi.from_dict(schema)
+
+    @given(case=schema["/any"]["POST"].as_strategy())
+    @settings(max_examples=1)
+    def test(case):
+        # Then Schemathesis should generate valid data of any supported type
+        assert case.as_transport_kwargs()["headers"]["Content-Type"] in REQUESTS_TRANSPORT._serializers
+
+    test()
+
+
+def test_serialization_not_possible_manual(ctx):
+    schema = ctx.openapi.build_schema(
+        {
+            "/test": {
+                "post": {
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {"type": "integer"},
+                            }
+                        },
+                    },
+                    "responses": {"200": {"description": "OK"}},
+                },
+            },
+        }
+    )
+    schema = schemathesis.openapi.from_dict(schema)
+
+    @given(case=schema["/test"]["POST"].as_strategy())
+    @settings(max_examples=1)
+    def test(case):
+        case.media_type = "application/whatever"
+        with pytest.raises(
+            SerializationNotPossible, match=SERIALIZATION_FOR_TYPE_IS_NOT_POSSIBLE_MESSAGE.format(case.media_type)
+        ):
+            case.as_transport_kwargs()
+
+    test()
+
+
+@pytest.mark.parametrize(
+    "media_type", ["text/yaml", "application/x-www-form-urlencoded", "text/plain", "multipart/form-data"]
+)
+def test_binary_data(ctx, media_type):
+    schema = ctx.openapi.build_schema(
+        {
+            "/test": {
+                "post": {
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            media_type: {
+                                "schema": {},
+                                "examples": {"answer": {"externalValue": "http://127.0.0.1:1/answer.json"}},
+                            }
+                        },
+                    },
+                    "responses": {"200": {"description": "OK"}},
+                },
+            },
+        }
+    )
+    schema = schemathesis.openapi.from_dict(schema)
     operation = schema["/test"]["POST"]
     # When an explicit bytes value is passed as body (it happens with `externalValue`)
     body = b"\x92\x42"
-    case = operation.make_case(body=body, media_type=media_type)
+    case = operation.Case(body=body, media_type=media_type)
     # Then it should be used as is
-    requests_kwargs = case.as_requests_kwargs()
-    assert requests_kwargs["data"] == body
-    werkzeug_kwargs = case.as_werkzeug_kwargs()
-    assert werkzeug_kwargs["data"] == body
-    if media_type != "multipart/form-data":
-        # Don't know the proper header for raw multipart content
-        assert requests_kwargs["headers"]["Content-Type"] == media_type
-        assert werkzeug_kwargs["headers"]["Content-Type"] == media_type
+    for transport in (REQUESTS_TRANSPORT, WSGI_TRANSPORT):
+        kwargs = transport.serialize_case(case)
+        assert kwargs["data"] == body
+        if media_type != "multipart/form-data":
+            # Don't know the proper header for raw multipart content
+            assert kwargs["headers"]["Content-Type"] == media_type
     # And it is OK to send it over the network
     assert_requests_call(case)
+
+
+TRANSPORT = RequestsTransport()
+
+
+@TRANSPORT.serializer(
+    "application/json",
+    "multipart/form-data",
+    "application/problem+json",
+    "application/octet-stream",
+    "application/x-www-form-urlencoded",
+    "application/x-yaml",
+    "application/yaml",
+    "application/xml",
+)
+def foo(ctx, value):
+    pass
+
+
+@pytest.mark.parametrize(
+    ("media_type", "expected"),
+    [
+        ("application/json", {"application/json"}),
+        ("application/problem+json", {"application/problem+json"}),
+        (
+            "application/*",
+            {
+                "application/json",
+                "application/octet-stream",
+                "application/problem+json",
+                "application/x-www-form-urlencoded",
+                "application/x-yaml",
+                "application/yaml",
+                "application/xml",
+            },
+        ),
+        ("*/form-data", {"multipart/form-data"}),
+        ("*/*", set(TRANSPORT._serializers)),
+    ],
+)
+def test_get_matching_serializers(media_type, expected):
+    assert {media_type for media_type, _ in TRANSPORT.get_matching_media_types(media_type)} == expected
+
+
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        ("/root-name", b"<data><id>42</id></data>"),
+        ("/auto-name", b"<AutoName><id>42</id></AutoName>"),
+        ("/explicit-name", b"<CustomName><id>42</id></CustomName>"),
+        ("/renamed-property", b"<RenamedProperty><renamed-id>42</renamed-id></RenamedProperty>"),
+        ("/property-attribute", b'<PropertyAsAttribute id="42"></PropertyAsAttribute>'),
+        ("/simple-array", b"<SimpleArray>42</SimpleArray><SimpleArray>42</SimpleArray>"),
+        (
+            "/wrapped-array",
+            b"<WrappedArray><WrappedArray>42</WrappedArray><WrappedArray>42</WrappedArray></WrappedArray>",
+        ),
+        (
+            "/array-with-renaming",
+            b"<items-array><item>42</item><item>42</item></items-array>",
+        ),
+        (
+            "/object-in-array",
+            b"<items><item><item-id>42</item-id></item><item><item-id>42</item-id></item></items>",
+        ),
+        (
+            "/array-in-object",
+            b"<items-object><items-array><id>42</id><id>42</id></items-array></items-object>",
+        ),
+        (
+            "/prefixed-object",
+            b"<smp:PrefixedObject><id>42</id></smp:PrefixedObject>",
+        ),
+        (
+            "/prefixed-array",
+            b'<smp:PrefixedArray xmlns:smp="http://example.com/schema">42</smp:PrefixedArray>'
+            b'<smp:PrefixedArray xmlns:smp="http://example.com/schema">42</smp:PrefixedArray>',
+        ),
+        (
+            "/prefixed-attribute",
+            b'<PrefixedAttribute xmlns:smp="http://example.com/schema" smp:id="42"></PrefixedAttribute>',
+        ),
+        (
+            "/namespaced-object",
+            b'<NamespacedObject xmlns="http://example.com/schema"><id>42</id></NamespacedObject>',
+        ),
+        (
+            "/namespaced-array",
+            b'<NamespacedArray xmlns="http://example.com/schema">42</NamespacedArray>'
+            b'<NamespacedArray xmlns="http://example.com/schema">42</NamespacedArray>',
+        ),
+        (
+            "/namespaced-wrapped-array",
+            b'<NamespacedWrappedArray xmlns="http://example.com/schema">'
+            b"<NamespacedWrappedArray>42</NamespacedWrappedArray>"
+            b"<NamespacedWrappedArray>42</NamespacedWrappedArray>"
+            b"</NamespacedWrappedArray>",
+        ),
+        (
+            "/namespaced-prefixed-object",
+            b'<smp:NamespacedPrefixedObject xmlns:smp="http://example.com/schema">'
+            b"<id>42</id>"
+            b"</smp:NamespacedPrefixedObject>",
+        ),
+        (
+            "/namespaced-prefixed-array",
+            b'<smp:NamespacedPrefixedArray xmlns:smp="http://example.com/schema">42</smp:NamespacedPrefixedArray>'
+            b'<smp:NamespacedPrefixedArray xmlns:smp="http://example.com/schema">42</smp:NamespacedPrefixedArray>',
+        ),
+        (
+            "/namespaced-prefixed-wrapped-array",
+            b'<smp:NamespacedPrefixedWrappedArray xmlns:smp="http://example.com/schema">'
+            b"<smp:NamespacedPrefixedWrappedArray>42</smp:NamespacedPrefixedWrappedArray>"
+            b"<smp:NamespacedPrefixedWrappedArray>42</smp:NamespacedPrefixedWrappedArray>"
+            b"</smp:NamespacedPrefixedWrappedArray>",
+        ),
+    ],
+)
+def test_serialize_xml(openapi_3_schema_with_xml, path, expected):
+    # When the schema contains XML payload
+    schema = schemathesis.openapi.from_dict(openapi_3_schema_with_xml)
+
+    @given(case=schema[path]["POST"].as_strategy())
+    @settings(max_examples=1)
+    def test(case):
+        # Then it should be correctly serialized
+        for transport in (REQUESTS_TRANSPORT, WSGI_TRANSPORT):
+            data = transport.serialize_case(case)["data"]
+            assert data == expected
+            # Arrays may be serialized into multiple elements without root, therefore wrapping everything and check if
+            # it can be parsed.
+            ElementTree.fromstring(f"<root xmlns:smp='http://example.com/schema'>{data.decode('utf8')}</root>")
+
+    original = deepclone(schema[path]["POST"].body[0].definition)
+
+    test()
+    # And serialization does not modify the original schema
+    assert schema[path]["POST"].body[0].definition == original
+
+
+@pytest.mark.parametrize(
+    "schema_object",
+    [
+        {
+            "type": "object",
+            "properties": {"id": {"enum": [42], "xml": {"prefix": "smp"}}},
+            "additionalProperties": False,
+            "required": ["id"],
+        },
+        {
+            "type": "array",
+            "items": {"enum": [42], "xml": {"prefix": "smp"}},
+            "minItems": 2,
+            "maxItems": 2,
+            "xml": {"wrapped": True},
+        },
+        {"type": "integer", "xml": {"prefix": "smp"}},
+    ],
+)
+def test_serialize_xml_unbound_prefix(ctx, schema_object):
+    # When the schema contains an unbound prefix
+    schema = ctx.openapi.build_schema(
+        {
+            "/test": {
+                "post": {
+                    "requestBody": {
+                        "content": {"application/xml": {"schema": {"$ref": "#/components/schemas/Main"}}},
+                        "required": True,
+                    },
+                    "responses": {"200": {"description": "OK"}},
+                }
+            }
+        },
+        components={"schemas": {"Main": schema_object}},
+    )
+
+    schema = schemathesis.openapi.from_dict(schema)
+
+    @given(case=schema["/test"]["POST"].as_strategy())
+    @settings(max_examples=1)
+    def test(case):
+        # Then it should be an error during serialization
+        with pytest.raises(SerializationError, match="Unbound prefix: `smp`"):
+            case.as_transport_kwargs()
+
+    test()
+
+
+SIMPLE_TEXT_STRATEGY = st.text(min_size=1, alphabet=st.sampled_from(string.ascii_letters))
+XML_OBJECT_STRATEGY = st.fixed_dictionaries(
+    {},
+    optional={
+        "name": SIMPLE_TEXT_STRATEGY,
+        "namespace": SIMPLE_TEXT_STRATEGY,
+        "prefix": SIMPLE_TEXT_STRATEGY,
+        "attribute": st.booleans(),
+        "wrapped": st.booleans(),
+    },
+)
+PRIMITIVE_SCHEMA_STRATEGY = (
+    st.fixed_dictionaries({"type": st.just("integer")}, optional={"xml": XML_OBJECT_STRATEGY})
+    | st.fixed_dictionaries({"type": st.just("string")}, optional={"xml": XML_OBJECT_STRATEGY})
+    | st.fixed_dictionaries({"type": st.just("boolean")}, optional={"xml": XML_OBJECT_STRATEGY})
+)
+SCHEMA_OBJECT_STRATEGY = st.deferred(
+    lambda: st.fixed_dictionaries(
+        {"type": st.just("object")},
+        optional={
+            "properties": st.dictionaries(SIMPLE_TEXT_STRATEGY, SCHEMA_OBJECT_STRATEGY | PRIMITIVE_SCHEMA_STRATEGY)
+        },
+    )
+    | st.fixed_dictionaries({"type": st.just("array"), "items": SCHEMA_OBJECT_STRATEGY})
+)
+
+
+@pytest.mark.parametrize("media_type", ["application/xml", "application/xml; charset=utf-8"])
+@given(data=st.data(), schema_object=SCHEMA_OBJECT_STRATEGY)
+@settings(suppress_health_check=list(HealthCheck), deadline=None, max_examples=25, phases=[Phase.generate])
+def test_serialize_xml_hypothesis(data, schema_object, media_type):
+    raw_schema = {
+        "openapi": "3.0.2",
+        "info": {"title": "Test", "description": "Test", "version": "0.1.0"},
+        "paths": {
+            "/test": {
+                "post": {
+                    "requestBody": {
+                        "content": {media_type: {"schema": {"$ref": "#/components/schemas/Main"}}},
+                        "required": True,
+                    },
+                    "responses": {"200": {"description": "OK"}},
+                }
+            }
+        },
+        "components": {"schemas": {"Main": schema_object}},
+    }
+
+    schema = schemathesis.openapi.from_dict(raw_schema)
+
+    case = data.draw(schema["/test"]["POST"].as_strategy())
+
+    # Arrays may be serialized into multiple elements without root, therefore wrapping everything and check if
+    # it can be parsed.
+    with suppress(SerializationError):
+        for transport in (REQUESTS_TRANSPORT, WSGI_TRANSPORT):
+            serialized_data = transport.serialize_case(case)["data"].decode("utf8")
+            ElementTree.fromstring(f"<root xmlns:smp='http://example.com/schema'>{serialized_data}</root>")
+
+
+def test_xml_with_binary(ctx):
+    schema = ctx.openapi.build_schema(
+        {
+            "/test": {
+                "post": {
+                    "requestBody": {
+                        "content": {"application/xml": {"schema": {"type": "string", "format": "file"}}},
+                        "required": True,
+                    },
+                    "responses": {"200": {"description": "OK"}},
+                },
+            },
+        }
+    )
+
+    schema = schemathesis.openapi.from_dict(schema)
+
+    @given(case=schema["/test"]["POST"].as_strategy())
+    @settings(max_examples=1)
+    def test(case):
+        assert case.as_transport_kwargs()["data"] in ("", "0")
+
+    test()
+
+
+def test_duplicate_xml_attributes(ctx):
+    schema = ctx.openapi.build_schema(
+        {
+            "/test": {
+                "post": {
+                    "requestBody": {
+                        "content": {
+                            "application/xml": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "prop1": {
+                                            "type": "integer",
+                                            "xml": {"namespace": "foo", "name": "attr", "attribute": True},
+                                        },
+                                        "prop2": {
+                                            "type": "integer",
+                                            "xml": {"namespace": "foo", "name": "attr", "attribute": True},
+                                        },
+                                    },
+                                }
+                            }
+                        },
+                        "required": True,
+                    },
+                    "responses": {"200": {"description": "OK"}},
+                }
+            }
+        }
+    )
+
+    schema = schemathesis.openapi.from_dict(schema)
+    case = schema["/test"]["POST"].Case(body={"prop1": 1, "prop2": 2})
+
+    serialized_data = case.as_transport_kwargs()["data"].decode("utf8")
+    ElementTree.fromstring(serialized_data)

@@ -1,0 +1,70 @@
+Exit code: 1
+---
+Stdout:
+Schemathesis dev
+━━━━━━━━━━━━━━━━
+
+
+ ✅  Loaded specification from http://127.0.0.1/openapi.json (in N ms)
+
+     Base URL:         http://127.0.0.1/
+     Specification:    Open API 3.0.2
+     Operations:       6 selected / 6 total
+
+
+ ✅  API capabilities:
+
+     Supports NULL byte in headers:    ✓
+
+ 🚫  Stateful tests (in N ms)
+
+     Scenarios:    N
+     API Links:    0 covered / 10 selected / 10 total
+
+     No tests were run
+
+==================================== ERRORS ====================================
+________________________________ Stateful tests ________________________________
+Invalid OpenAPI Links Definition
+
+The following API operations contain invalid link definitions:
+
+  POST /users -> [201] InvalidUser -> GET /users/{userId}
+
+     - Parameter `unknown` is not defined in API operation `GET /users/{userId}`
+     - Expression `$request.query.wrong` references non-existent query parameter `wrong` in `POST /users`
+
+  POST /users -> [201] InvalidUser-2 -> GET /users/{userId}
+
+     - Parameter `unknown` is not defined in API operation `GET /users/{userId}`
+     - Expression `$request.query.wrong` references non-existent query parameter `wrong` in `POST /users`
+
+  PATCH /users/{userId} -> [200] GetUser -> GET /users/{userId}
+
+     - Invalid expression `$req.[`. Unknown token: `$req`
+     - Parameter `something` is not defined in API operation `GET /users/{userId}`
+     - Expression `$request.path.whatever` references non-existent path parameter `whatever` in `PATCH /users/{userId}`
+
+Need more help?
+    Join our Discord server: https://discord.gg/R9ASRAmHnA
+=================================== SUMMARY ====================================
+
+API Operations:
+  Selected: 6/6
+  Tested: 0
+  Skipped: 6
+
+Test Phases:
+  ✅ API probing
+  ⏭️ Unit testing (disabled)
+  🚫 Stateful testing
+
+Errors:
+  🚫 Invalid OpenAPI Links Definition: 1
+
+Test cases:
+  No test cases were generated
+
+Seed: 42
+
+=============================== 1 error in 1.00s ===============================

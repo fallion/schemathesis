@@ -1,20 +1,26 @@
+import json
+import platform
 from pathlib import Path
 
 import pytest
+from hypothesis import HealthCheck, given, settings
+from hypothesis_jsonschema._canonicalise import HypothesisRefResolutionError
+from jsonschema.validators import Draft4Validator
 
 import schemathesis
+from schemathesis.core.errors import LoaderError
 
 from .utils import as_param, get_schema, integer
 
 
-@pytest.fixture()
+@pytest.fixture
 def petstore():
     return get_schema("petstore_v2.yaml")
 
 
 @pytest.mark.parametrize(
-    "ref, expected",
-    (
+    ("ref", "expected"),
+    [
         (
             {"$ref": "#/definitions/Category"},
             {
@@ -60,71 +66,229 @@ def petstore():
                 "xml": {"name": "Pet"},
             },
         ),
-    ),
+    ],
 )
 def test_resolve(petstore, ref, expected):
     assert petstore.resolver.resolve_all(ref) == expected
 
 
-def test_recursive_reference(mocker):
+def test_recursive_reference(mocker, schema_with_recursive_references):
     mocker.patch("schemathesis.specs.openapi.references.RECURSION_DEPTH_LIMIT", 1)
     reference = {"$ref": "#/components/schemas/Node"}
-    raw_schema = {
-        "info": {"description": "Test", "title": "Test", "version": "1.0.0"},
-        "openapi": "3.0.2",
-        "paths": {
-            "/events": {
-                "get": {
+    schema = schemathesis.openapi.from_dict(schema_with_recursive_references)
+    assert schema.resolver.resolve_all(reference) == {
+        "properties": {"child": {"properties": {"child": reference}, "required": ["child"], "type": "object"}},
+        "required": ["child"],
+        "type": "object",
+    }
+
+
+USER_REFERENCE = {"$ref": "#/components/schemas/User"}
+ELIDABLE_SCHEMA = {"description": "Test", "type": "object", "properties": {"foo": {"type": "integer"}}}
+ALL_OF_ROOT = {"allOf": [USER_REFERENCE, {"description": "Test"}], "type": "object", "additionalProperties": False}
+
+
+def build_schema_with_recursion(schema, definition):
+    schema["paths"]["/users"] = {
+        "post": {
+            "description": "Test",
+            "summary": "Test",
+            "requestBody": {"content": {"application/json": {"schema": USER_REFERENCE}}, "required": True},
+            "responses": {"200": {"description": "Test"}},
+        }
+    }
+    schema["components"] = {"schemas": {"User": definition}}
+
+
+@pytest.mark.parametrize(
+    "definition",
+    [
+        {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {"parent": USER_REFERENCE, "foo": {"type": "integer"}},
+        },
+        {"type": "array", "items": USER_REFERENCE, "maxItems": 1},
+        {"type": "array", "items": [USER_REFERENCE, {"type": "integer"}], "maxItems": 1},
+        {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "children": {
+                    "items": USER_REFERENCE,
+                    "maxItems": 1,
+                    "type": "array",
+                },
+            },
+        },
+        {"type": "object", "additionalProperties": USER_REFERENCE, "maxProperties": 1},
+        {"type": "object", "additionalProperties": False, "properties": {"parent": {"allOf": [USER_REFERENCE]}}},
+        {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {"parent": {"allOf": [USER_REFERENCE, {"description": "Test"}]}},
+        },
+        {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {"parent": {"allOf": [USER_REFERENCE, ELIDABLE_SCHEMA]}},
+        },
+        {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {"parent": {"allOf": [ELIDABLE_SCHEMA, USER_REFERENCE]}},
+        },
+        {"type": "array", "items": {"allOf": [USER_REFERENCE]}, "maxItems": 1},
+        ALL_OF_ROOT,
+    ],
+    ids=[
+        "properties",
+        "items-object",
+        "items-array",
+        "items-inside-properties",
+        "additionalProperties",
+        "allOf-one-item-properties",
+        "allOf-one-item-properties-with-empty-schema",
+        "allOf-one-item-properties-with-elidable-schema-1",
+        "allOf-one-item-properties-with-elidable-schema-2",
+        "allOf-one-item-items",
+        "allOf-one-item-root",
+    ],
+)
+@pytest.mark.hypothesis_nested
+@pytest.mark.skipif(platform.system() == "Windows", reason="Fails on Windows due to recursion")
+def test_drop_recursive_references_from_the_last_resolution_level(ctx, definition):
+    raw_schema = ctx.openapi.build_schema({})
+    build_schema_with_recursion(raw_schema, definition)
+    schema = schemathesis.openapi.from_dict(raw_schema)
+
+    validator = Draft4Validator({**USER_REFERENCE, "components": raw_schema["components"]})
+
+    @given(case=schema["/users"]["POST"].as_strategy())
+    @settings(max_examples=25, suppress_health_check=[HealthCheck.too_slow, HealthCheck.filter_too_much], deadline=None)
+    def test(case):
+        # Generated payload should be valid for the original schema (with references)
+        try:
+            validator.validate(case.body)
+        except RecursionError:
+            # jsonschema infinitely recurse on some cases
+            if definition is not ALL_OF_ROOT:
+                raise
+            pass
+
+    test()
+
+
+@pytest.mark.parametrize(
+    "definition",
+    [
+        USER_REFERENCE,
+        {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["parent"],
+            "properties": {"parent": USER_REFERENCE, "foo": {"type": "integer"}},
+        },
+        {"type": "array", "items": USER_REFERENCE, "minItems": 1},
+        {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "parent": {
+                    "allOf": [
+                        {"type": "object", "properties": {"foo": {"type": "integer"}}, "required": ["foo"]},
+                        USER_REFERENCE,
+                    ]
+                }
+            },
+        },
+    ],
+)
+@pytest.mark.skipif(platform.system() == "Windows", reason="Fails on Windows due to recursion")
+def test_non_removable_recursive_references(ctx, definition):
+    schema = ctx.openapi.build_schema({})
+    build_schema_with_recursion(schema, definition)
+    schema = schemathesis.openapi.from_dict(schema)
+
+    @given(case=schema["/users"]["POST"].as_strategy())
+    @settings(max_examples=1)
+    def test(case):
+        pass
+
+    with pytest.raises(HypothesisRefResolutionError):
+        test()
+
+
+def test_nested_recursive_references(ctx):
+    schema = ctx.openapi.build_schema(
+        {
+            "/folders": {
+                "post": {
                     "description": "Test",
-                    "responses": {
-                        "200": {
-                            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Response"}}},
-                            "description": "Test",
-                        },
-                    },
                     "summary": "Test",
+                    "requestBody": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/editFolder",
+                                }
+                            }
+                        },
+                        "required": True,
+                    },
+                    "responses": {"200": {"description": "Test"}},
                 }
             }
         },
-        "components": {
+        components={
             "schemas": {
-                "Response": {
-                    "description": "Test",
-                    "properties": {"data": reference},
-                    "required": ["data"],
+                "editFolder": {
                     "type": "object",
+                    "properties": {
+                        "parent": {"$ref": "#/components/schemas/Folder"},
+                    },
+                    "additionalProperties": False,
                 },
-                "Node": {
-                    "description": "Test",
-                    "properties": {"children": {"items": reference, "type": "array"}},
+                "Folder": {
                     "type": "object",
+                    "properties": {
+                        "folders": {"$ref": "#/components/schemas/Folders"},
+                    },
+                    "additionalProperties": False,
+                },
+                "Folders": {
+                    "type": "object",
+                    "properties": {
+                        "folder": {
+                            "allOf": [
+                                {
+                                    "minItems": 1,
+                                    "type": "array",
+                                    "items": {"$ref": "#/components/schemas/Folder"},
+                                }
+                            ]
+                        },
+                    },
+                    "additionalProperties": False,
                 },
             }
         },
-        "servers": [{"url": "/abc"}],
-    }
-    schema = schemathesis.from_dict(raw_schema)
-    assert schema.resolver.resolve_all(reference) == {
-        "description": "Test",
-        "properties": {
-            "children": {
-                "items": {
-                    "description": "Test",
-                    "properties": {"children": {"items": reference, "type": "array"}},
-                    "type": "object",
-                },
-                "type": "array",
-            }
-        },
-        "type": "object",
-    }
+    )
+    schema = schemathesis.openapi.from_dict(schema)
+
+    @given(case=schema["/folders"]["POST"].as_strategy())
+    @settings(max_examples=1)
+    def test(case):
+        pass
+
+    test()
 
 
 def test_simple_dereference(testdir):
     # When a given parameter contains a JSON reference
     testdir.make_test(
         """
-@schema.parametrize(method="POST")
+@schema.include(method="POST").parametrize()
 @settings(max_examples=1)
 def test_(request, case):
     request.config.HYPOTHESIS_CASES += 1
@@ -159,7 +323,7 @@ def test_recursive_dereference(testdir):
     # When a given parameter contains a JSON reference, that reference an object with another reference
     testdir.make_test(
         """
-@schema.parametrize(method="POST")
+@schema.include(method="POST").parametrize()
 @settings(max_examples=1)
 def test_(request, case):
     request.config.HYPOTHESIS_CASES += 1
@@ -202,7 +366,7 @@ def test_inner_dereference(testdir):
     # When a given parameter contains a JSON reference inside a property of an object
     testdir.make_test(
         """
-@schema.parametrize(method="POST")
+@schema.include(method="POST").parametrize()
 @settings(max_examples=1)
 def test_(request, case):
     request.config.HYPOTHESIS_CASES += 1
@@ -241,7 +405,7 @@ def test_inner_dereference_with_lists(testdir):
     # When a given parameter contains a JSON reference inside a list in `allOf`
     testdir.make_test(
         """
-@schema.parametrize(method="POST")
+@schema.include(method="POST").parametrize()
 @settings(max_examples=1)
 def test_(request, case):
     request.config.HYPOTHESIS_CASES += 1
@@ -282,64 +446,13 @@ def test_(request, case):
     result.stdout.re_match_lines([r"Hypothesis calls: 1$"])
 
 
-def make_nullable_test_data(spec_version):
-    field_name = {"openapi": "nullable", "swagger": "x-nullable"}[spec_version]
-    return (
-        (
-            {
-                "properties": {
-                    "id": {"format": "int64", "type": "integer", field_name: True},
-                    "name": {"type": "string"},
-                },
-                "type": "object",
-            },
-            {
-                "properties": {
-                    "id": {"anyOf": [{"format": "int64", "type": "integer"}, {"type": "null"}]},
-                    "name": {"type": "string"},
-                },
-                "type": "object",
-            },
-        ),
-        (
-            {
-                "parameters": [
-                    {"name": "id", "in": "query", "type": "integer", "format": "int64", field_name: True},
-                    {"name": "name", "type": "string"},
-                ]
-            },
-            {
-                "parameters": [
-                    {"name": "id", "in": "query", "format": "int64", "anyOf": [{"type": "integer"}, {"type": "null"}]},
-                    {"name": "name", "type": "string"},
-                ]
-            },
-        ),
-        (
-            {
-                "properties": {
-                    "id": {"type": "string", "enum": ["a", "b"], field_name: True},
-                    "name": {"type": "string"},
-                },
-                "type": "object",
-            },
-            {
-                "properties": {
-                    "id": {"anyOf": [{"type": "string", "enum": ["a", "b"]}, {"type": "null"}]},
-                    "name": {"type": "string"},
-                },
-                "type": "object",
-            },
-        ),
+@pytest.mark.parametrize("extra", [{}, {"enum": ["foo"]}])
+@pytest.mark.parametrize("version", ["2.0", "3.0.2"])
+def test_nullable_parameters(ctx, testdir, version, extra):
+    schema = ctx.openapi.build_schema(
+        {"/users": {"get": {"responses": {"200": {"description": "OK"}}}}}, version=version
     )
-
-
-@pytest.mark.parametrize("extra", ({}, {"enum": ["foo"]}))
-@pytest.mark.parametrize("spec_version", ("open_api_2", "open_api_3"))
-def test_nullable_parameters(request, testdir, spec_version, extra):
-    schema = request.getfixturevalue(f"empty_{spec_version}_schema")
-    schema["paths"] = {"/users": {"get": {"responses": {"200": {"description": "OK"}}}}}
-    if spec_version == "open_api_2":
+    if version == "2.0":
         schema["paths"]["/users"]["get"]["parameters"] = [
             {"in": "query", "name": "id", "type": "string", "x-nullable": True, "required": True, **extra}
         ]
@@ -368,7 +481,7 @@ def test_(request, case):
 def test_nullable_properties(testdir):
     testdir.make_test(
         """
-@schema.parametrize(method="POST")
+@schema.include(method="POST").parametrize()
 @settings(max_examples=1)
 def test_(request, case):
     assume(case.body["id"] is None)
@@ -406,7 +519,7 @@ def test_(request, case):
 def test_nullable_ref(testdir):
     testdir.make_test(
         """
-@schema.parametrize(method="POST")
+@schema.include(method="POST").parametrize()
 @settings(max_examples=1)
 def test_(request, case):
     request.config.HYPOTHESIS_CASES += 1
@@ -487,7 +600,7 @@ def test_(request, case):
 
 
 def test_complex_dereference(testdir, complex_schema):
-    schema = schemathesis.from_path(complex_schema)
+    schema = schemathesis.openapi.from_path(complex_schema)
     path = Path(str(testdir))
     body_definition = {
         "schema": {
@@ -555,10 +668,9 @@ def test_complex_dereference(testdir, complex_schema):
         "tags": ["ancillaries"],
     }
     assert operation.definition.scope == f"{path.as_uri()}/root/paths/teapot.yaml#/TeapotCreatePath"
-    assert len(operation.definition.parameters) == 1
-    assert operation.definition.parameters[0].required
-    assert operation.definition.parameters[0].media_type == "application/json"
-    assert operation.definition.parameters[0].definition == body_definition
+    assert operation.body[0].required
+    assert operation.body[0].media_type == "application/json"
+    assert operation.body[0].definition == body_definition
 
 
 def test_remote_reference_to_yaml(swagger_20, schema_url):
@@ -588,33 +700,153 @@ def assert_unique_objects(item):
     traverse(item)
 
 
-def test_unique_objects_after_inlining(empty_open_api_3_schema):
+def test_unique_objects_after_inlining(ctx):
     # When the schema contains deep references
-    empty_open_api_3_schema["paths"] = {
-        "/test": {
-            "post": {
-                "requestBody": {
-                    "content": {"application/json": {"schema": {"$ref": "#/components/schemas/step5"}}},
-                },
-                "responses": {"default": {"description": "Success"}},
-            }
-        }
-    }
-    empty_open_api_3_schema["components"] = {
-        "schemas": {
-            "final": {"type": "object"},
-            "step1": {"$ref": "#/components/schemas/final"},
-            "step2": {"$ref": "#/components/schemas/step1"},
-            "step3": {"$ref": "#/components/schemas/step2"},
-            "step4": {"$ref": "#/components/schemas/step3"},
-            "step5": {
-                "properties": {
-                    "first": {"$ref": "#/components/schemas/step4"},
-                    "second": {"$ref": "#/components/schemas/step4"},
+    schema = ctx.openapi.build_schema(
+        {
+            "/test": {
+                "post": {
+                    "requestBody": {
+                        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/step5"}}},
+                    },
+                    "responses": {"default": {"description": "Success"}},
                 }
-            },
-        }
-    }
-    schema = schemathesis.from_dict(empty_open_api_3_schema)
+            }
+        },
+        components={
+            "schemas": {
+                "final": {"type": "object"},
+                "step1": {"$ref": "#/components/schemas/final"},
+                "step2": {"$ref": "#/components/schemas/step1"},
+                "step3": {"$ref": "#/components/schemas/step2"},
+                "step4": {"$ref": "#/components/schemas/step3"},
+                "step5": {
+                    "properties": {
+                        "first": {"$ref": "#/components/schemas/step4"},
+                        "second": {"$ref": "#/components/schemas/step4"},
+                    }
+                },
+            }
+        },
+    )
+    schema = schemathesis.openapi.from_dict(schema)
     # Then inlined objects should be unique
     assert_unique_objects(schema["/test"]["post"].body[0].definition)
+
+
+REFERENCE_TO_PARAM = {
+    "/test": {
+        "get": {
+            "parameters": [
+                {
+                    "schema": {"$ref": "#/components/parameters/key"},
+                    "in": "query",
+                    "name": "key",
+                    "required": True,
+                }
+            ],
+            "responses": {"default": {"description": "Success"}},
+        }
+    }
+}
+
+
+def test_unresolvable_reference_during_generation(ctx, testdir):
+    # When there is a reference that can't be resolved during generation
+    # Then it should be properly reported
+    schema = ctx.openapi.build_schema(
+        REFERENCE_TO_PARAM,
+        components={
+            "parameters": {"key": {"$ref": "#/components/schemas/Key0"}},
+            "schemas": {
+                # The last key does not point anywhere
+                **{f"Key{idx}": {"$ref": f"#/components/schemas/Key{idx + 1}"} for idx in range(8)},
+            },
+        },
+    )
+    main = testdir.mkdir("root") / "main.json"
+    main.write_text(json.dumps(schema), "utf8")
+    schema = schemathesis.openapi.from_path(str(main))
+
+    @given(case=schema["/test"]["GET"].as_strategy())
+    def test(case):
+        pass
+
+    with pytest.raises(LoaderError, match="Unresolvable JSON pointer in the schema: /components/schemas/Key8"):
+        test()
+
+
+@pytest.mark.parametrize(
+    ("key", "expected"),
+    [
+        ("Key7", 'Can not generate data for query parameter "key"! Its schema should be an object, got None'),
+        ("Key8", "Unresolvable JSON pointer: 'components/schemas/Key8'"),
+    ],
+)
+def test_uncommon_type_in_generation(ctx, testdir, key, expected):
+    # When there is a reference that leads to a non-dictionary
+    # Then it should not lead to an error
+    schema = ctx.openapi.build_schema(
+        REFERENCE_TO_PARAM,
+        components={
+            "parameters": {"key": {"$ref": "#/components/schemas/Key0"}},
+            "schemas": {**{f"Key{idx}": {"$ref": f"#/components/schemas/Key{idx + 1}"} for idx in range(8)}, key: None},
+        },
+    )
+    main = testdir.mkdir("root") / "main.json"
+    main.write_text(json.dumps(schema), "utf8")
+    schema = schemathesis.openapi.from_path(str(main))
+
+    @given(case=schema["/test"]["GET"].as_strategy())
+    def test(case):
+        pass
+
+    with pytest.raises(Exception, match=expected):
+        test()
+
+
+def test_global_security_schemes_with_custom_scope(ctx, testdir, cli, snapshot_cli, openapi3_base_url):
+    # See GH-2300
+    schema = ctx.openapi.build_schema(
+        {
+            "/test": {
+                "$ref": "paths/tests/test.json",
+            }
+        },
+        components={
+            "securitySchemes": {
+                "bearerAuth": {
+                    "$ref": "components/securitySchemes/bearerAuth.json",
+                }
+            }
+        },
+        security=[{"bearerAuth": []}],
+    )
+    bearer = {"type": "http", "scheme": "bearer"}
+    operation = {
+        "get": {
+            "description": "Test",
+            "operationId": "test",
+            "responses": {"200": {"description": "OK"}},
+        }
+    }
+    root = testdir.mkdir("root")
+    raw_schema_path = root / "openapi.json"
+    raw_schema_path.write_text(json.dumps(schema), "utf8")
+    components = (root / "components").mkdir()
+    paths = (root / "paths").mkdir()
+    tests = (paths / "tests").mkdir()
+    security_schemes = (components / "securitySchemes").mkdir()
+    (security_schemes / "bearerAuth.json").write_text(json.dumps(bearer), "utf8")
+    (tests / "test.json").write_text(json.dumps(operation), "utf8")
+
+    assert cli.run(str(raw_schema_path), f"--url={openapi3_base_url}") == snapshot_cli
+
+
+def test_missing_file_in_resolution(ctx, testdir, cli, snapshot_cli, openapi3_base_url):
+    schema = ctx.openapi.build_schema({"/test": {"$ref": "paths/test.json"}})
+    root = testdir.mkdir("root")
+    raw_schema_path = root / "openapi.json"
+    raw_schema_path.write_text(json.dumps(schema), "utf8")
+
+    assert cli.run(str(raw_schema_path), f"--url={openapi3_base_url}") == snapshot_cli

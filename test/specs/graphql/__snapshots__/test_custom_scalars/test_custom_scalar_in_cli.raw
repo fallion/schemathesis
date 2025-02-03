@@ -1,0 +1,54 @@
+Exit code: 1
+---
+Stdout:
+Schemathesis dev
+━━━━━━━━━━━━━━━━
+
+
+ ✅  Loaded specification from /tmp/schema.gql (in N ms)
+
+     Base URL:         http://127.0.0.1/graphql
+     Specification:    GraphQL
+     Operations:       1 selected / 1 total
+
+
+ ✅  API capabilities:
+
+     Supports NULL byte in headers:    ✓
+
+ 🚫  Unit tests (in N ms)
+
+     🚫 1 errors
+
+==================================== ERRORS ====================================
+_______________________________ Query.getByDate ________________________________
+Unknown GraphQL Scalar
+
+Scalar type 'FooBar' is not recognized
+
+Tip: Define a custom strategy for it.
+For guidance, visit: https://schemathesis.readthedocs.io/en/stable/graphql.html#custom-scalars
+
+Need more help?
+    Join our Discord server: https://discord.gg/R9ASRAmHnA
+=================================== SUMMARY ====================================
+
+API Operations:
+  Selected: 1/1
+  Tested: 0
+  Errored: 1
+
+Test Phases:
+  ✅ API probing
+  🚫 Unit testing
+  ⏭️ Stateful testing (not supported)
+
+Errors:
+  🚫 Unknown GraphQL Scalar: 1
+
+Test cases:
+  No test cases were generated
+
+Seed: 42
+
+=============================== 1 error in 1.00s ===============================

@@ -1,16 +1,17 @@
 """Tests for parsing of parameters related to forms."""
+
 import pytest
 
-from schemathesis.parameters import PayloadAlternatives
+from schemathesis.schemas import PayloadAlternatives
 from schemathesis.specs.openapi.parameters import OpenAPI20CompositeBody, OpenAPI20Parameter, OpenAPI30Body
 
 
 @pytest.mark.parametrize(
     "consumes",
-    (
+    [
         ["application/x-www-form-urlencoded"],
         ["application/x-www-form-urlencoded", "multipart/form-data"],
-    ),
+    ],
 )
 def test_forms_open_api_2(
     consumes, assert_parameters, make_openapi_2_schema, user_jsonschema, open_api_2_user_form_parameters
@@ -36,11 +37,11 @@ def test_forms_open_api_2(
 
 @pytest.mark.parametrize(
     "consumes",
-    (
+    [
         ["multipart/form-data"],
         # When "consumes" is not defined, then multipart is the default media type for "formData" parameters
         [],
-    ),
+    ],
 )
 def test_multipart_form_open_api_2(
     consumes,

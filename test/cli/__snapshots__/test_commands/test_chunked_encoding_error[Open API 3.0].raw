@@ -1,0 +1,53 @@
+Exit code: 1
+---
+Stdout:
+Schemathesis dev
+━━━━━━━━━━━━━━━━
+
+
+ ✅  Loaded specification from http://127.0.0.1/schema.yaml (in N ms)
+
+     Base URL:         http://127.0.0.1/api
+     Specification:    Open API 3.0.2
+     Operations:       1 selected / 1 total
+
+
+ ✅  API capabilities:
+
+     Supports NULL byte in headers:    ✘
+
+ 🚫  Unit tests (in N ms)
+
+     🚫 1 errors
+
+==================================== ERRORS ====================================
+_________________________________ GET /success _________________________________
+Network Error
+
+Connection broken. The server declared chunked encoding but sent an invalid chunk
+
+    InvalidChunkLength(got length b'', 0 bytes read)
+
+Need more help?
+    Join our Discord server: https://discord.gg/R9ASRAmHnA
+=================================== SUMMARY ====================================
+
+API Operations:
+  Selected: 1/1
+  Tested: 0
+  Errored: 1
+
+Test Phases:
+  ✅ API probing
+  🚫 Unit testing
+  ⏭️ Stateful testing (not applicable)
+
+Errors:
+  🚫 Network Error: 1
+
+Test cases:
+  N generated, N skipped
+
+Seed: 42
+
+=============================== 1 error in 1.00s ===============================

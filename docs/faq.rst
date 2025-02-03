@@ -15,6 +15,13 @@ This data consists of all possible data types from the JSON schema specification
 We can't guarantee that the generated data will always be accepted by the application under test since there could be validation rules not covered by the API schema.
 If you found that Schemathesis generated something that doesn't fit the API schema, consider `reporting a bug <https://github.com/schemathesis/schemathesis/issues/new?assignees=Stranger6667&labels=Status%3A+Review+Needed%2C+Type%3A+Bug&template=bug_report.md&title=%5BBUG%5D>`_
 
+How many tests does Schemathesis execute for an API operation?
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The total number of tests Schemathesis executes is influenced by the API schema's complexity, user-defined settings like ``--hypothesis-max-examples`` for the maximum tests generated, and the test generation phases (``explicit``, ``generate``, ``reuse``, and ``shrink``). 
+The process is designed to optimize coverage within a reasonable test budget rather than aiming for exhaustive coverage. 
+For detailed insights and customization options, refer to our :ref:`data generation docs <data-generation-overview>`.
+
 What kind errors Schemathesis is capable to find?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -50,6 +57,14 @@ Dredd works more in a way that requires you to write some sort of example-based 
 There are a lot of features that Dredd has are Schemathesis has not (e.g., API Blueprint support, that powerful hook system, and many more) and probably vice versa.
 Definitely, Schemathesis can learn a lot from Dredd and if you miss any feature that exists in Dredd but doesn't exist in Schemathesis, let us know.
 
+Why are no examples generated in Schemathesis when using ``--hypothesis-phase=explicit``?
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The ``--hypothesis-phase=explicit`` option is designed to test only the examples that are explicitly defined in the API schema.
+It avoids generating new examples to maintain predictability and adhere strictly to the documented API behavior.
+
+If you need random examples for API operations without explicit examples, consider using the ``--contrib-openapi-fill-missing-examples`` CLI option.
+
 How should I run Schemathesis?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -62,8 +77,7 @@ If you wrote your application in a language other than Python, you should use th
 Should I always have my application running before starting the test suite?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Only in some workflows! In CLI, you can test your AioHTTP / ASGI / WSGI apps with the ``--app`` CLI option.
-For the ``pytest`` integration, there is ``schemathesis.from_pytest_fixture`` loader where you can postpone API schema loading
+For the ``pytest`` integration, there is ``schemathesis.pytest.from_fixture`` loader where you can postpone API schema loading
 and start the test application as a part of your test setup. See more information in the :doc:`../python` section.
 
 How long does it usually take for Schemathesis to test an app?
@@ -93,30 +107,21 @@ The ``case`` object that is injected in each test can be modified, assuming your
     def test_api(case):
         case.path_parameters["user_id"] = 42
 
-Why does Schemathesis fail to parse my API schema generate by FastAPI?
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Because FastAPI uses JSON Draft 7 under the hood (via ``pydantic``), which is not compatible with JSON drafts defined by
-the Open API 2 / 3.0.x versions. It is a `known issue <https://github.com/tiangolo/fastapi/issues/240>`_ on the FastAPI side.
-Schemathesis is more strict in schema handling by default, but we provide optional fixups for this case:
-
-.. code:: python
-
-    import schemathesis
-
-    # will install all available compatibility fixups.
-    schemathesis.fixups.install()
-    # You can also provide a list of fixup names as the first argument
-    # schemathesis.fixups.install(["fast_api"])
-
-For more information, take a look into the "Compatibility" section.
-
 Why Schemathesis generates uniform data for my API schema?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 There might be multiple reasons for that, but usually, this behavior occurs when the API schema is complex or deeply nested.
 Please, refer to the ``Data generation`` section in the documentation for more info. If you think that it is not the case, feel
 free to `open an issue <https://github.com/schemathesis/schemathesis/issues/new?assignees=Stranger6667&labels=Status%3A+Review+Needed%2C+Type%3A+Bug&template=bug_report.md&title=%5BBUG%5D>`_.
+
+How different is ``--request-timeout`` from ``--hypothesis-deadline``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+These CLI parameters both represent some kind of limit for the duration of a certain part of a single test. However, each of them has a different scope.
+
+``--hypothesis-deadline`` counts parts of a single test case execution, including waiting for the API response, and running all checks and relevant hooks for that single test case.
+
+``--request-timeout`` is only relevant for waiting for the API response. If this duration is exceeded, the test is marked as a "Timeout".
 
 Why Schemathesis reports "Flaky" errors?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -130,11 +135,10 @@ Let's imagine that we have an API where the user can create "orders", then the "
 1. Create order "A" -> 201 with payload that does not conform to the definition in the API schema;
 2. Create order "A" again to verify the failure -> 409 with conformant payload.
 
-Currently, the solution is to clean the application state between test runs.
-With CLI, it could be done via the :ref:`before_call <hooks_before_call>` hook. With Python tests you may want to write
-a context manager as `suggested <https://hypothesis.readthedocs.io/en/latest/healthchecks.html#hypothesis.HealthCheck.function_scoped_fixture>`_ by Hypothesis docs.
+With Python tests, you may want to write a context manager that cleans the application state between test runs as
+`suggested <https://hypothesis.readthedocs.io/en/latest/healthchecks.html#hypothesis.HealthCheck.function_scoped_fixture>`_ by Hypothesis docs.
 
-There is an `open issue <https://github.com/schemathesis/schemathesis/issues/1081>`_ for an option to disable this behaviour completely.
+CLI reports flaky failures as regular failures with a special note about their flakiness. Cleaning the application state could be done via the :ref:`before_call <hooks_before_call>` hook.
 
 Does Schemathesis support Open API discriminators? Schemathesis raises an "Unsatisfiable" error.
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -250,6 +254,57 @@ To prevent this situation you might use ``required`` and ``additionalProperties`
 By adding these keywords, any ``Cat`` instance will always require the ``hunts`` and ``age`` properties to be present.
 
 As an alternative, you could use the ``anyOf`` keyword instead.
+
+Why is Schemathesis slower on Windows when using ``localhost``?
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+When Schemathesis sends a request to ``http://localhost/``, it first attempts to use IPv6. This can cause delays if your server only supports IPv4.
+This is especially problematic on Windows due to an unavoidable 1-second timeout for refused TCP connections, which the OS may retry up to three times.
+On Linux, the connection fails immediately if refused, allowing a quick switch to IPv4.
+
+**Solution**: To avoid this delay, simply use http://127.0.0.1/ instead of http://localhost/. This ensures that Schemathesis will use IPv4 directly.
+
+Why can’t Schemathesis connect to my locally running application when run via Docker on MacOS?
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The host has a changing IP address, or none if you have no network access. As a result, the Docker container cannot use ``localhost`` to reach the host machine.
+
+**Solution**: Instead, use ``host.docker.internal`` as the hostname to allow Schemathesis to connect to services running on the host.
+
+How to prevent Schemathesis from generating NULL bytes in strings?
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+By default, Schemathesis generates ``NULL`` bytes for all strings in order to cover more possible edge cases.
+
+**Solution**: To prevent Schemathesis from generating ``NULL`` bytes in strings, you need to set the ``allow_x00`` configuration to ``False``.
+
+CLI:
+
+.. code:: text
+
+    $ st run --generation-allow-x00=false ...
+
+Python:
+
+.. code:: python
+
+    import schemathesis
+    from schemathesis import GenerationConfig
+
+    schema = schemathesis.openapi.from_url(
+        "https://example.schemathesis.io/openapi.json",
+        generation_config=GenerationConfig(allow_x00=False),
+    )
+
+This adjustment ensures that Schemathesis does not include NULL bytes in strings for all your tests, making them compatible with systems that reject such inputs.
+
+How can I use custom authentication methods with Schemathesis?
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Schemathesis supports custom authentication through its extensions system.
+
+For detailed instructions on implementing custom authentication methods or using existing libraries for that, 
+refer to our :ref:`Custom Authentication <custom-auth>` and :ref:`Third-party Authentication <third-party-auth>` sections.
 
 Working with API schemas
 ------------------------

@@ -1,0 +1,39 @@
+Exit code: 0
+---
+Stdout:
+Schemathesis dev
+━━━━━━━━━━━━━━━━
+
+
+ ✅  Loaded specification from http://127.0.0.1/schema.yaml (in N ms)
+
+     Base URL:         http://127.0.0.1/api
+     Specification:    Open API 3.0.2
+     Operations:       2 selected / 2 total
+
+
+ ✅  API capabilities:
+
+     Supports NULL byte in headers:    ✘
+
+ ⚡  Unit tests (interrupted after N ms)
+
+     ✅ 1 passed  ⏭️ 1 skipped
+=================================== SUMMARY ====================================
+
+API Operations:
+  Selected: 2/2
+  Tested: 1
+  Skipped: 1
+
+Test Phases:
+  ✅ API probing
+  ⚡ Unit testing
+  ⏭️ Stateful testing
+
+Test cases:
+  N generated, N passed, N skipped
+
+Seed: 42
+
+=========================== No issues found in 1.00s ===========================

@@ -1,0 +1,58 @@
+Exit code: 1
+---
+Stdout:
+Schemathesis dev
+━━━━━━━━━━━━━━━━
+
+
+ ✅  Loaded specification from /tmp/schema.gql (in N ms)
+
+     Base URL:         http://127.0.0.1/graphql
+     Specification:    GraphQL
+     Operations:       1 selected / 1 total
+
+
+ ✅  API capabilities:
+
+     Supports NULL byte in headers:    ✓
+
+ ❌  Unit tests (in N ms)
+
+     ❌ 1 failed
+
+=================================== FAILURES ===================================
+________________________________ Query.getValue ________________________________
+1. Test Case ID: <PLACEHOLDER>
+
+- GraphQL client error
+
+    Cannot query field 'getValue' on type 'Query'.
+
+[200] OK:
+
+    `{"data": null, "errors": [{"message": "Cannot query field 'getValue' on type 'Query'.", "locations": [{"line": 2, "column": 3}]}]}`
+
+Reproduce with:
+
+    curl -X POST -H 'Content-Type: application/json' -d '{"query": "{\n  getValue(value: 0)\n}"}' http://127.0.0.1/graphql
+
+=================================== SUMMARY ====================================
+
+API Operations:
+  Selected: 1/1
+  Tested: 1
+
+Test Phases:
+  ✅ API probing
+  ❌ Unit testing
+  ⏭️ Stateful testing (not supported)
+
+Failures:
+  ❌ GraphQL client error: 1
+
+Test cases:
+  N generated, N found N unique failures
+
+Seed: 42
+
+============================== 1 failure in 1.00s ==============================
